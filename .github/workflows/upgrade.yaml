@@ -122,4 +122,9 @@ jobs:
           commit-message: ${{ steps.versions.outputs.message }}
           title: ${{ steps.versions.outputs.message }}
           delete-branch: true
-          body: Automated update of pinned dependency versions in the production module code.
+          body: |
+            Automated update of pinned dependency versions in the production module code.
+
+            **Don't forget to run the e2e for this branch before merging!**
+
+            https://github.com/matheuscscp/terraform-kubernetes-flux-operator-bootstrap/actions/workflows/e2e.yaml

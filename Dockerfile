@@ -1,6 +1,6 @@
-FROM ghcr.io/controlplaneio-fluxcd/flux-operator-cli:v0.43.0@sha256:60fb838282d605c9bdb417b830e8e690ec9300989b1a7ceaf6bbbf4589362355 AS flux-operator-cli
+FROM ghcr.io/controlplaneio-fluxcd/flux-operator-cli:v0.44.0@sha256:63521eeb823e79abd6874d6e1b4b13e92e2df6f873fd036bc34e48a5e8a8a147 AS flux-operator-cli
 
-FROM alpine:3.20@sha256:a4f4213abb84c497377b8544c81b3564f313746700372ec4fe84653e4fb03805 AS builder
+FROM alpine:3.23@sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659 AS builder
 
 ARG HELM_VERSION=v4.1.3
 ARG KUBECTL_VERSION=v1.35.2
@@ -18,7 +18,7 @@ RUN apk add --no-cache bash ca-certificates curl tar gzip && \
 COPY scripts/bootstrap.sh /out/usr/local/bin/bootstrap.sh
 RUN chmod +x /out/usr/local/bin/bootstrap.sh
 
-FROM busybox:1.36.1-musl@sha256:3c6ae8008e2c2eedd141725c30b20d9c36b026eb796688f88205845ef17aa213 AS busybox
+FROM busybox:1.37.0-musl@sha256:19b646668802469d968a05342a601e78da4322a414a7c09b1c9ee25165042138 AS busybox
 
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:a9329520abc449e3b14d5bc3a6ffae065bdde0f02667fa10880c49b35c109fd1
 

@@ -50,8 +50,12 @@ wait_for_flux_instance_crd() {
 
 cleanup() {
   log "Cleaning up bootstrap access"
-  kubectl delete serviceaccount "${service_account_name}" -n "${bootstrap_namespace}" --ignore-not-found=true >/dev/null 2>&1 || true
-  kubectl delete clusterrolebinding "${cluster_role_binding_name}" --ignore-not-found=true >/dev/null 2>&1 || true
+  if ! kubectl delete serviceaccount "${service_account_name}" -n "${bootstrap_namespace}" --ignore-not-found=true >/dev/null; then
+    log "Failed to delete ServiceAccount ${bootstrap_namespace}/${service_account_name}"
+  fi
+  if ! kubectl delete clusterrolebinding "${cluster_role_binding_name}" --ignore-not-found=true >/dev/null; then
+    log "Failed to delete ClusterRoleBinding ${cluster_role_binding_name}"
+  fi
 }
 
 namespace="$(extract_metadata_value namespace)"

@@ -153,11 +153,7 @@ resource "null_resource" "watch_job" {
   depends_on = [kubernetes_job_v1.this]
 
   triggers = {
-    job_name             = kubernetes_job_v1.this.metadata[0].name
-    job_namespace        = kubernetes_job_v1.this.metadata[0].namespace
-    job_uid              = kubernetes_job_v1.this.metadata[0].uid
-    timeout              = var.timeout
-    bootstrap_script_sha = filesha256("${path.module}/scripts/watch-job.sh")
+    job_uid = kubernetes_job_v1.this.metadata[0].uid
   }
 
   provisioner "local-exec" {

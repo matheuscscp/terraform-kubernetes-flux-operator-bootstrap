@@ -18,7 +18,7 @@ jobs:
       image_digest: ${{ steps.slsa.outputs.image_digest }}
     runs-on: ubuntu-latest
     permissions:
-      contents: read  # for checking out the repository contents.
+      contents: write # for checking out the repository contents and publishing the GitHub Release.
       id-token: write # for generating OIDC tokens used by cosign keyless signing.
       packages: write # for pushing the container image to GitHub Container Registry.
     steps:
@@ -85,6 +85,14 @@ jobs:
             --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
             --certificate-identity="https://github.com/${REPOSITORY}/.github/workflows/release.yaml@${GITHUB_REF}" \
             ${{ env.IMAGE }}@${{ steps.build-push.outputs.digest }}
+
+      - name: Publish GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.prep.outputs.version }}" \
+            --generate-notes \
+            --latest
 
       - name: Generate SLSA metadata
         id: slsa

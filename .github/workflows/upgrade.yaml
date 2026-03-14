@@ -62,6 +62,11 @@ jobs:
                 .at(-1);
             };
 
+            const majorConstraint = (version) => {
+              const major = version.split(".")[0];
+              return `~> ${major}.0`;
+            };
+
             const dockerfilePath = "Dockerfile";
             const versionsPath = "versions.tf";
             const dockerfile = fs.readFileSync(dockerfilePath, "utf8");
@@ -69,14 +74,14 @@ jobs:
 
             const currentHelmVersion = dockerfile.match(/^ARG HELM_VERSION=(.+)$/m)[1];
             const currentKubectlVersion = dockerfile.match(/^ARG KUBECTL_VERSION=(.+)$/m)[1];
-            const currentKubernetesProviderVersion = versionsTf.match(/kubernetes\s*=\s*\{[\s\S]*?source\s*=\s*"hashicorp\/kubernetes"[\s\S]*?version\s*=\s*">=\s*([^"]+)"/m)[1];
-            const currentNullProviderVersion = versionsTf.match(/null\s*=\s*\{[\s\S]*?source\s*=\s*"hashicorp\/null"[\s\S]*?version\s*=\s*">=\s*([^"]+)"/m)[1];
+            const currentKubernetesProviderVersion = versionsTf.match(/kubernetes\s*=\s*\{[\s\S]*?source\s*=\s*"hashicorp\/kubernetes"[\s\S]*?version\s*=\s*"([^"]+)"/m)[1];
+            const currentNullProviderVersion = versionsTf.match(/null\s*=\s*\{[\s\S]*?source\s*=\s*"hashicorp\/null"[\s\S]*?version\s*=\s*"([^"]+)"/m)[1];
 
             const helmRelease = await fetchJson("https://api.github.com/repos/helm/helm/releases/latest");
             const kubectlVersion = await fetchText("https://dl.k8s.io/release/stable.txt");
             const helmVersion = helmRelease.tag_name;
-            const kubernetesProviderVersion = await latestStableProviderVersion("kubernetes");
-            const nullProviderVersion = await latestStableProviderVersion("null");
+            const kubernetesProviderVersion = majorConstraint(await latestStableProviderVersion("kubernetes"));
+            const nullProviderVersion = majorConstraint(await latestStableProviderVersion("null"));
 
             const nextDockerfile = dockerfile
               .replace(/^ARG HELM_VERSION=.*$/m, `ARG HELM_VERSION=${helmVersion}`)
@@ -84,11 +89,11 @@ jobs:
 
             const nextVersionsTf = versionsTf
               .replace(
-                /(kubernetes\s*=\s*\{[\s\S]*?source\s*=\s*"hashicorp\/kubernetes"[\s\S]*?version\s*=\s*">=\s*)[^"]+(")/m,
+                /(kubernetes\s*=\s*\{[\s\S]*?source\s*=\s*"hashicorp\/kubernetes"[\s\S]*?version\s*=\s*")[^"]+(")/m,
                 `$1${kubernetesProviderVersion}$2`,
               )
               .replace(
-                /(null\s*=\s*\{[\s\S]*?source\s*=\s*"hashicorp\/null"[\s\S]*?version\s*=\s*">=\s*)[^"]+(")/m,
+                /(null\s*=\s*\{[\s\S]*?source\s*=\s*"hashicorp\/null"[\s\S]*?version\s*=\s*")[^"]+(")/m,
                 `$1${nullProviderVersion}$2`,
               );
 
@@ -98,8 +103,8 @@ jobs:
             const changes = [];
             if (currentKubectlVersion !== kubectlVersion) changes.push(`kubectl to ${kubectlVersion}`);
             if (currentHelmVersion !== helmVersion) changes.push(`helm to ${helmVersion}`);
-            if (currentKubernetesProviderVersion !== kubernetesProviderVersion) changes.push(`terraform-provider-kubernetes to v${kubernetesProviderVersion}`);
-            if (currentNullProviderVersion !== nullProviderVersion) changes.push(`terraform-provider-null to v${nullProviderVersion}`);
+            if (currentKubernetesProviderVersion !== kubernetesProviderVersion) changes.push(`terraform-provider-kubernetes to ${kubernetesProviderVersion}`);
+            if (currentNullProviderVersion !== nullProviderVersion) changes.push(`terraform-provider-null to ${nullProviderVersion}`);
 
             let message = "Upgrade pinned dependencies";
             if (changes.length === 1) {

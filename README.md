@@ -16,11 +16,17 @@ The module creates:
 - a host-side watcher that:
   - polls the Job every 2 seconds until it succeeds or fails
   - prints pod logs before failing Terraform if the Job fails or times out
-  - deletes the completed Job so the next apply can recreate it
+  - deletes the Job after a successful watched run so the next apply can recreate it
 
 The namespace referenced by the provided `FluxInstance` manifest is created by
 the bootstrap Job if it does not already exist. Terraform does not manage that
 target namespace directly.
+
+The `kubernetes` input is only used by the optional host-side `kubectl`
+watcher. Regardless of whether you use that watcher, callers must still
+configure the HashiCorp Kubernetes provider for the module itself, because the
+module creates Kubernetes resources such as the bootstrap namespace, ConfigMap,
+and Job through that provider.
 
 When `wait = true` and `use_kubectl_watcher = true` (the default), the machine
 running Terraform must have `kubectl` and `bash` available in `PATH`. In this
@@ -36,11 +42,20 @@ When `wait = false`, the module does not wait at all. The host-side watcher is
 skipped, provider-side Job waiting is disabled, and the finished Job is cleaned
 up by TTL.
 
+TTL cleanup starts only after the Job reaches a terminal state (`Complete` or
+`Failed`), not immediately after Terraform creates it.
+
 ## Usage
 
 With the default host-side `kubectl` watcher:
 
 ```hcl
+provider "kubernetes" {
+  host                   = data.aws_eks_cluster.this.endpoint
+  cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
+  token                  = data.aws_eks_cluster_auth.this.token
+}
+
 module "flux_operator_bootstrap" {
   source  = "matheuscscp/flux-operator-bootstrap/kubernetes"
   version = "0.1.0"
@@ -63,6 +78,12 @@ module "flux_operator_bootstrap" {
 Without the host-side `kubectl` watcher:
 
 ```hcl
+provider "kubernetes" {
+  host                   = data.aws_eks_cluster.this.endpoint
+  cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
+  token                  = data.aws_eks_cluster_auth.this.token
+}
+
 module "flux_operator_bootstrap" {
   source  = "matheuscscp/flux-operator-bootstrap/kubernetes"
   version = "0.1.0"
@@ -83,9 +104,9 @@ module "flux_operator_bootstrap" {
 
 - `flux_instance_yaml`: FluxInstance manifest YAML text
 - `use_kubectl_watcher`: when `wait` is true, use the host-side `kubectl` watcher instead of provider-side Job waiting
-- `kubernetes.host`: Kubernetes API server host for the watcher when `wait` and `use_kubectl_watcher` are true
-- `kubernetes.cluster_ca_certificate`: PEM-encoded cluster CA certificate for the watcher when `wait` and `use_kubectl_watcher` are true
-- `kubernetes.token`: bearer token for the watcher when `wait` and `use_kubectl_watcher` are true
+- `kubernetes.host`: Kubernetes API server host for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true
+- `kubernetes.cluster_ca_certificate`: PEM-encoded cluster CA certificate for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true
+- `kubernetes.token`: bearer token for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true
 - `bootstrap_namespace`: namespace for Terraform-managed bootstrap resources
 - `image.repository`: bootstrap job image repository
 - `image.tag`: bootstrap job image tag

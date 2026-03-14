@@ -76,5 +76,5 @@ module "flux_operator_bootstrap" {
 - `image.tag`: bootstrap job image tag
 - `wait`: master switch for waiting; enables `flux-operator wait instance` in the Job and Terraform-side waiting via the watcher or provider
 - `timeout`: global bootstrap wait timeout used by the script, watcher, and provider-side Job waiting
-- `ttl_after_finished`: TTL for finished bootstrap Jobs when `use_kubectl_watcher` is false
+- `ttl_after_finished`: TTL for finished bootstrap Jobs whenever the host-side watcher will not delete the Job
 - `debug_fault_injection_message`: testing-only fault injection that forces the job to fail after printing the supplied message

@@ -10,6 +10,7 @@ image_tag="dev"
 image="${image_repository}:${image_tag}"
 success_tf_dir="$(mktemp -d)"
 provider_wait_tf_dir="$(mktemp -d)"
+no_wait_tf_dir="$(mktemp -d)"
 failure_tf_dir="$(mktemp -d)"
 failure_apply_log=""
 kubernetes_host=""
@@ -31,6 +32,21 @@ kubectl_get_flux_operator_resources() {
     -A || true
 }
 
+assert_flux_runtime_ready() {
+  kubectl --context "kind-${cluster_name}" -n flux-system wait \
+    --for=condition=Ready \
+    fluxinstance.fluxcd.controlplane.io/flux \
+    --timeout=120s >/dev/null
+
+  kubectl --context "kind-${cluster_name}" -n flux-system rollout status \
+    deployment/flux-operator \
+    --timeout=120s >/dev/null
+
+  kubectl --context "kind-${cluster_name}" -n flux-system rollout status \
+    deployment/source-controller \
+    --timeout=120s >/dev/null
+}
+
 dump_bootstrap_logs() {
   namespace="$1"
 
@@ -44,7 +60,7 @@ dump_bootstrap_logs() {
 
 cleanup() {
   kind delete cluster --name "${cluster_name}" || true
-  rm -rf "${success_tf_dir}" "${provider_wait_tf_dir}" "${failure_tf_dir}"
+  rm -rf "${success_tf_dir}" "${provider_wait_tf_dir}" "${no_wait_tf_dir}" "${failure_tf_dir}"
 }
 
 trap cleanup EXIT
@@ -55,9 +71,10 @@ render_root_module() {
   fault_injection_message="$3"
   use_kubectl_watcher="$4"
   ttl_after_finished="$5"
+  wait="$6"
   watcher_inputs=""
 
-  if [ "${use_kubectl_watcher}" = "true" ]; then
+  if [ "${use_kubectl_watcher}" = "true" ] && [ "${wait}" = "true" ]; then
     watcher_inputs=$(cat <<EOF
   kubernetes_host = "${kubernetes_host}"
   kubernetes_cluster_ca_certificate = <<PEM
@@ -90,6 +107,7 @@ module "bootstrap" {
 
   bootstrap_namespace = "${bootstrap_namespace}"
   use_kubectl_watcher = ${use_kubectl_watcher}
+  wait                = ${wait}
   ttl_after_finished  = "${ttl_after_finished}"
 ${watcher_inputs}
 
@@ -137,16 +155,20 @@ kubernetes_token="$(kubectl --context "kind-${cluster_name}" -n watcher-auth cre
 
 section "Happy Path"
 note "Rendering success scenario Terraform root"
-render_root_module "${success_tf_dir}" "flux-operator-bootstrap" "" "true" "5m"
+render_root_module "${success_tf_dir}" "flux-operator-bootstrap" "" "true" "5m" "true"
 note "Initializing success scenario"
 terraform -chdir="${success_tf_dir}" init -no-color -backend=false
 
 note "Running initial bootstrap apply"
 terraform -chdir="${success_tf_dir}" apply -no-color -auto-approve
+note "Verifying FluxInstance and Flux workloads are ready"
+assert_flux_runtime_ready
 
 section "Idempotency"
 note "Running second bootstrap apply to verify idempotent rerun"
 terraform -chdir="${success_tf_dir}" apply -no-color -auto-approve
+note "Re-verifying Flux runtime after idempotent rerun"
+assert_flux_runtime_ready
 
 section "Destroy Behavior"
 note "Capturing Flux resources before destroy"
@@ -169,7 +191,7 @@ fi
 
 section "Provider Wait Mode"
 note "Rendering provider-wait scenario Terraform root"
-render_root_module "${provider_wait_tf_dir}" "flux-operator-bootstrap-provider-wait" "" "false" "5s"
+render_root_module "${provider_wait_tf_dir}" "flux-operator-bootstrap-provider-wait" "" "false" "5s" "true"
 note "Initializing provider-wait scenario"
 terraform -chdir="${provider_wait_tf_dir}" init -no-color -backend=false
 note "Running provider-wait bootstrap apply"
@@ -186,9 +208,32 @@ if kubectl --context "kind-${cluster_name}" -n flux-operator-bootstrap-provider-
   exit 1
 fi
 
+section "No Wait Mode"
+note "Rendering no-wait scenario Terraform root"
+render_root_module "${no_wait_tf_dir}" "flux-operator-bootstrap-no-wait" "" "true" "5s" "false"
+note "Initializing no-wait scenario"
+terraform -chdir="${no_wait_tf_dir}" init -no-color -backend=false
+note "Running no-wait bootstrap apply"
+terraform -chdir="${no_wait_tf_dir}" apply -no-color -auto-approve
+note "Waiting for no-wait bootstrap Job to be garbage-collected by TTL"
+for _ in $(seq 1 15); do
+  if ! kubectl --context "kind-${cluster_name}" -n flux-operator-bootstrap-no-wait get job flux-operator-bootstrap >/dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
+if kubectl --context "kind-${cluster_name}" -n flux-operator-bootstrap-no-wait get job flux-operator-bootstrap >/dev/null 2>&1; then
+  echo "No-wait bootstrap job was not deleted by TTL" >&2
+  exit 1
+fi
+if kubectl --context "kind-${cluster_name}" -n flux-operator-bootstrap-no-wait get serviceaccount flux-operator-bootstrap >/dev/null 2>&1; then
+  echo "No-wait bootstrap service account still exists after TTL cleanup window" >&2
+  exit 1
+fi
+
 section "Failure Path"
 note "Rendering failure scenario Terraform root"
-render_root_module "${failure_tf_dir}" "flux-operator-bootstrap-failure" "intentional e2e fault injection" "true" "5m"
+render_root_module "${failure_tf_dir}" "flux-operator-bootstrap-failure" "intentional e2e fault injection" "true" "5m" "true"
 note "Initializing failure scenario"
 terraform -chdir="${failure_tf_dir}" init -no-color -backend=false
 
@@ -209,4 +254,4 @@ grep -F "Fault injection triggered: intentional e2e fault injection" "${failure_
 grep -F "=== bootstrap job failed ===" "${failure_apply_log}" >/dev/null
 
 section "Assertions"
-note "Verified idempotent rerun, destroy behavior, provider-wait mode, and failure log wiring"
+note "Verified Flux readiness, idempotent rerun, destroy behavior, provider-wait mode, no-wait mode, and failure log wiring"

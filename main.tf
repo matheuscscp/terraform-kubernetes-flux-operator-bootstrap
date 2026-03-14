@@ -74,7 +74,7 @@ resource "kubernetes_job_v1" "this" {
 
   spec {
     backoff_limit              = 0
-    ttl_seconds_after_finished = var.use_kubectl_watcher ? null : local.ttl_after_finished_seconds
+    ttl_seconds_after_finished = var.wait && var.use_kubectl_watcher ? null : local.ttl_after_finished_seconds
 
     template {
       metadata {}

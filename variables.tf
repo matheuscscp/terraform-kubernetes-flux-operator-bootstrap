@@ -21,41 +21,25 @@ variable "use_kubectl_watcher" {
   default     = true
 }
 
-variable "kubernetes_host" {
-  description = "Kubernetes API server host used by the host-side watcher when wait and use_kubectl_watcher are true."
-  type        = string
-  default     = null
-  nullable    = true
+variable "kubernetes" {
+  description = "Kubernetes API access used by the host-side watcher when wait and use_kubectl_watcher are true."
+  type = object({
+    host                   = optional(string)
+    cluster_ca_certificate = optional(string)
+    token                  = optional(string)
+  })
+  default  = {}
+  nullable = false
 
   validation {
-    condition     = !(var.wait && var.use_kubectl_watcher) || var.kubernetes_host != null
-    error_message = "kubernetes_host must be set when wait and use_kubectl_watcher are true."
-  }
-}
-
-variable "kubernetes_cluster_ca_certificate" {
-  description = "PEM-encoded Kubernetes cluster CA certificate used by the host-side watcher when wait and use_kubectl_watcher are true."
-  type        = string
-  default     = null
-  nullable    = true
-  sensitive   = true
-
-  validation {
-    condition     = !(var.wait && var.use_kubectl_watcher) || var.kubernetes_cluster_ca_certificate != null
-    error_message = "kubernetes_cluster_ca_certificate must be set when wait and use_kubectl_watcher are true."
-  }
-}
-
-variable "kubernetes_token" {
-  description = "Bearer token used by the host-side watcher when wait and use_kubectl_watcher are true."
-  type        = string
-  default     = null
-  nullable    = true
-  sensitive   = true
-
-  validation {
-    condition     = !(var.wait && var.use_kubectl_watcher) || var.kubernetes_token != null
-    error_message = "kubernetes_token must be set when wait and use_kubectl_watcher are true."
+    condition = (
+      !(var.wait && var.use_kubectl_watcher) || (
+        try(var.kubernetes.host, null) != null &&
+        try(var.kubernetes.cluster_ca_certificate, null) != null &&
+        try(var.kubernetes.token, null) != null
+      )
+    )
+    error_message = "kubernetes.host, kubernetes.cluster_ca_certificate, and kubernetes.token must be set when wait and use_kubectl_watcher are true."
   }
 }
 

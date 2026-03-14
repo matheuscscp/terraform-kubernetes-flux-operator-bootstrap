@@ -42,12 +42,21 @@ With the default host-side `kubectl` watcher:
 
 ```hcl
 module "flux_operator_bootstrap" {
-  source = "github.com/matheuscscp/terraform-kubernetes-flux-operator-bootstrap"
+  source  = "matheuscscp/flux-operator-bootstrap/kubernetes"
+  version = "0.1.0"
 
-  kubernetes_host                   = data.aws_eks_cluster.this.endpoint
-  kubernetes_cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
-  kubernetes_token                  = data.aws_eks_cluster_auth.this.token
-  flux_instance_yaml                = file("${path.root}/clusters/staging/flux-system/flux-instance.yaml")
+  # Keep image.tag aligned with the module version.
+  image = {
+    tag = "0.1.0"
+  }
+
+  kubernetes = {
+    host                   = data.aws_eks_cluster.this.endpoint
+    cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
+    token                  = data.aws_eks_cluster_auth.this.token
+  }
+
+  flux_instance_yaml = file("${path.root}/clusters/staging/flux-system/flux-instance.yaml")
 }
 ```
 
@@ -55,7 +64,13 @@ Without the host-side `kubectl` watcher:
 
 ```hcl
 module "flux_operator_bootstrap" {
-  source = "github.com/matheuscscp/terraform-kubernetes-flux-operator-bootstrap"
+  source  = "matheuscscp/flux-operator-bootstrap/kubernetes"
+  version = "0.1.0"
+
+  # Keep image.tag aligned with the module version.
+  image = {
+    tag = "0.1.0"
+  }
 
   use_kubectl_watcher = false
   ttl_after_finished  = "5m"
@@ -68,9 +83,9 @@ module "flux_operator_bootstrap" {
 
 - `flux_instance_yaml`: FluxInstance manifest YAML text
 - `use_kubectl_watcher`: when `wait` is true, use the host-side `kubectl` watcher instead of provider-side Job waiting
-- `kubernetes_host`: Kubernetes API server host for the watcher when `wait` and `use_kubectl_watcher` are true
-- `kubernetes_cluster_ca_certificate`: PEM-encoded cluster CA certificate for the watcher when `wait` and `use_kubectl_watcher` are true
-- `kubernetes_token`: bearer token for the watcher when `wait` and `use_kubectl_watcher` are true
+- `kubernetes.host`: Kubernetes API server host for the watcher when `wait` and `use_kubectl_watcher` are true
+- `kubernetes.cluster_ca_certificate`: PEM-encoded cluster CA certificate for the watcher when `wait` and `use_kubectl_watcher` are true
+- `kubernetes.token`: bearer token for the watcher when `wait` and `use_kubectl_watcher` are true
 - `bootstrap_namespace`: namespace for Terraform-managed bootstrap resources
 - `image.repository`: bootstrap job image repository
 - `image.tag`: bootstrap job image tag

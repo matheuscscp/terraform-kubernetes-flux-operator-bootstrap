@@ -168,9 +168,9 @@ resource "null_resource" "watch_job" {
       JOB_NAME                          = kubernetes_job_v1.this.metadata[0].name
       JOB_NAMESPACE                     = kubernetes_job_v1.this.metadata[0].namespace
       TIMEOUT                           = var.timeout
-      KUBERNETES_HOST                   = var.kubernetes_host
-      KUBERNETES_CLUSTER_CA_CERTIFICATE = var.kubernetes_cluster_ca_certificate
-      KUBERNETES_TOKEN                  = var.kubernetes_token
+      KUBERNETES_HOST                   = try(var.kubernetes.host, null)
+      KUBERNETES_CLUSTER_CA_CERTIFICATE = try(var.kubernetes.cluster_ca_certificate, null)
+      KUBERNETES_TOKEN                  = try(var.kubernetes.token, null)
     }
   }
 

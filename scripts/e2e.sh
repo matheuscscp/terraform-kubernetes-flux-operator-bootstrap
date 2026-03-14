@@ -76,11 +76,13 @@ render_root_module() {
 
   if [ "${use_kubectl_watcher}" = "true" ] && [ "${wait}" = "true" ]; then
     watcher_inputs=$(cat <<EOF
-  kubernetes_host = "${kubernetes_host}"
-  kubernetes_cluster_ca_certificate = <<PEM
+  kubernetes = {
+    host = "${kubernetes_host}"
+    cluster_ca_certificate = <<PEM
 ${kubernetes_cluster_ca_certificate}
 PEM
-  kubernetes_token = "${kubernetes_token}"
+    token = "${kubernetes_token}"
+  }
 EOF
 )
   fi

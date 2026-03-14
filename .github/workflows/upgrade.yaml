@@ -125,6 +125,6 @@ jobs:
           body: |
             Automated update of pinned dependency versions in the production module code.
 
-            **Don't forget to run the e2e for this branch before merging!**
+            **Don't forget to run the e2e for this branch before merging:**
 
-            https://github.com/matheuscscp/terraform-kubernetes-flux-operator-bootstrap/actions/workflows/e2e.yaml
+            https://github.com/${{ github.repository }}/actions/workflows/e2e.yaml

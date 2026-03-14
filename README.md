@@ -12,13 +12,15 @@ The module creates:
   - installs the `flux-operator` Helm release if missing
   - applies the `FluxInstance` if missing
   - optionally waits for the instance to become ready
+  - deletes its temporary `ServiceAccount` and `ClusterRoleBinding` before exiting
 - a host-side watcher that:
   - polls the Job every 2 seconds until it succeeds or fails
   - prints pod logs before failing Terraform if the Job fails or times out
   - deletes the completed Job so the next apply can recreate it
 
-The namespace referenced by the provided `FluxInstance` manifest must already
-exist. The module does not manage it.
+The namespace referenced by the provided `FluxInstance` manifest is created by
+the bootstrap Job if it does not already exist. Terraform does not manage that
+target namespace directly.
 
 When `wait = true` and `use_kubectl_watcher = true` (the default), the machine
 running Terraform must have `kubectl` and `bash` available in `PATH`. In this
@@ -30,21 +32,34 @@ host-side watcher and relies on the Terraform Kubernetes provider to wait for
 Job completion. In that mode the Job gets a TTL and no host `kubectl`
 credentials are required.
 
-When `wait = false`, the module does not wait at all:
-- the host-side watcher is skipped
-- provider-side Job waiting is disabled
-- no TTL is set on the Job
+When `wait = false`, the module does not wait at all. The host-side watcher is
+skipped, provider-side Job waiting is disabled, and the finished Job is cleaned
+up by TTL.
 
 ## Usage
+
+With the default host-side `kubectl` watcher:
 
 ```hcl
 module "flux_operator_bootstrap" {
   source = "github.com/matheuscscp/terraform-kubernetes-flux-operator-bootstrap"
 
-  use_kubectl_watcher            = true
   kubernetes_host                   = data.aws_eks_cluster.this.endpoint
   kubernetes_cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
   kubernetes_token                  = data.aws_eks_cluster_auth.this.token
+  flux_instance_yaml                = file("${path.root}/clusters/staging/flux-system/flux-instance.yaml")
+}
+```
+
+Without the host-side `kubectl` watcher:
+
+```hcl
+module "flux_operator_bootstrap" {
+  source = "github.com/matheuscscp/terraform-kubernetes-flux-operator-bootstrap"
+
+  use_kubectl_watcher = false
+  ttl_after_finished  = "5m"
+
   flux_instance_yaml = file("${path.root}/clusters/staging/flux-system/flux-instance.yaml")
 }
 ```
@@ -61,20 +76,5 @@ module "flux_operator_bootstrap" {
 - `image.tag`: bootstrap job image tag
 - `wait`: master switch for waiting; enables `flux-operator wait instance` in the Job and Terraform-side waiting via the watcher or provider
 - `timeout`: global bootstrap wait timeout used by the script, watcher, and provider-side Job waiting
-- `ttl_after_finished`: TTL for finished bootstrap Jobs when `wait` is true and `use_kubectl_watcher` is false
+- `ttl_after_finished`: TTL for finished bootstrap Jobs when `use_kubectl_watcher` is false
 - `debug_fault_injection_message`: testing-only fault injection that forces the job to fail after printing the supplied message
-
-## Image
-
-The bootstrap Job image is expected to contain:
-
-- `helm`
-- `kubectl`
-- `flux-operator`
-- the bootstrap shell script at the image entrypoint
-
-For local testing:
-
-```sh
-make docker-build
-```

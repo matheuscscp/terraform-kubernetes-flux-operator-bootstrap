@@ -89,7 +89,7 @@ variable "timeout" {
 }
 
 variable "ttl_after_finished" {
-  description = "TTL for finished bootstrap Jobs when wait is true and use_kubectl_watcher is false."
+  description = "TTL for finished bootstrap Jobs when use_kubectl_watcher is false."
   type        = string
   default     = "5m"
 

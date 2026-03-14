@@ -32,6 +32,16 @@ kubectl_get_flux_operator_resources() {
     -A || true
 }
 
+secret_value() {
+  kubectl --context "kind-${cluster_name}" -n flux-system get secret/bootstrap-managed \
+    -o jsonpath='{.data.value}' | base64 --decode
+}
+
+prerequisite_configmap_value() {
+  kubectl --context "kind-${cluster_name}" -n bootstrap-prereq get configmap/bootstrap-prereq \
+    -o jsonpath='{.data.value}'
+}
+
 assert_flux_runtime_ready() {
   kubectl --context "kind-${cluster_name}" -n flux-system wait \
     --for=condition=Ready \
@@ -45,6 +55,20 @@ assert_flux_runtime_ready() {
   kubectl --context "kind-${cluster_name}" -n flux-system rollout status \
     deployment/source-controller \
     --timeout=120s >/dev/null
+}
+
+assert_bootstrap_inputs_applied() {
+  kubectl --context "kind-${cluster_name}" get namespace bootstrap-prereq >/dev/null
+
+  if [ "$(prerequisite_configmap_value)" != "initial" ]; then
+    echo "Prerequisite ConfigMap did not contain the expected initial value" >&2
+    exit 1
+  fi
+
+  if [ "$(secret_value)" != "expected" ]; then
+    echo "Managed Secret did not contain the expected initial value" >&2
+    exit 1
+  fi
 }
 
 dump_bootstrap_logs() {
@@ -120,6 +144,35 @@ ${watcher_inputs}
 
   debug_fault_injection_message = "${fault_injection_message}"
 
+  prerequisites_yaml = [
+    <<YAML
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bootstrap-prereq
+YAML
+    ,
+    <<YAML
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bootstrap-prereq
+  namespace: bootstrap-prereq
+data:
+  value: initial
+YAML
+  ]
+
+  secrets_yaml = <<YAML
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bootstrap-managed
+type: Opaque
+stringData:
+  value: expected
+YAML
+
   flux_instance_yaml = <<YAML
 apiVersion: fluxcd.controlplane.io/v1
 kind: FluxInstance
@@ -165,12 +218,30 @@ note "Running initial bootstrap apply"
 terraform -chdir="${success_tf_dir}" apply -no-color -auto-approve
 note "Verifying FluxInstance and Flux workloads are ready"
 assert_flux_runtime_ready
+note "Verifying ordered prerequisites and managed secrets were applied"
+assert_bootstrap_inputs_applied
 
 section "Idempotency"
+note "Introducing drift in the managed Secret and prerequisite ConfigMap"
+kubectl --context "kind-${cluster_name}" -n flux-system patch secret bootstrap-managed \
+  --type merge \
+  -p '{"data":{"value":"ZHJpZnRlZA=="}}' >/dev/null
+kubectl --context "kind-${cluster_name}" -n bootstrap-prereq patch configmap bootstrap-prereq \
+  --type merge \
+  -p '{"data":{"value":"drifted"}}' >/dev/null
+
 note "Running second bootstrap apply to verify idempotent rerun"
 terraform -chdir="${success_tf_dir}" apply -no-color -auto-approve
 note "Re-verifying Flux runtime after idempotent rerun"
 assert_flux_runtime_ready
+if [ "$(secret_value)" != "expected" ]; then
+  echo "Managed Secret drift was not corrected by the second apply" >&2
+  exit 1
+fi
+if [ "$(prerequisite_configmap_value)" != "drifted" ]; then
+  echo "Prerequisite drift was unexpectedly reconciled" >&2
+  exit 1
+fi
 
 section "Destroy Behavior"
 note "Capturing Flux resources before destroy"
@@ -256,4 +327,4 @@ grep -F "Fault injection triggered: intentional e2e fault injection" "${failure_
 grep -F "=== bootstrap job failed ===" "${failure_apply_log}" >/dev/null
 
 section "Assertions"
-note "Verified Flux readiness, idempotent rerun, destroy behavior, provider-wait mode, no-wait mode, and failure log wiring"
+note "Verified prerequisites, managed secret reconciliation, Flux readiness, idempotent rerun, destroy behavior, provider-wait mode, no-wait mode, and failure log wiring"

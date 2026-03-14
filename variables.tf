@@ -15,6 +15,21 @@ variable "flux_instance_yaml" {
   }
 }
 
+variable "prerequisites_yaml" {
+  description = "Ordered prerequisite manifest YAMLs to apply with create-if-missing semantics before the target namespace is created."
+  type        = list(string)
+  default     = []
+  nullable    = false
+}
+
+variable "secrets_yaml" {
+  description = "Multi-document Secret manifest YAML to reconcile into the Flux target namespace with server-side apply semantics. Each document must be a Secret, and its namespace must be omitted or match the FluxInstance namespace."
+  type        = string
+  default     = ""
+  sensitive   = true
+  nullable    = false
+}
+
 variable "use_kubectl_watcher" {
   description = "Whether to use the host-side kubectl watcher when wait is true, instead of relying on the Terraform Kubernetes provider to wait for Job completion."
   type        = bool
@@ -28,8 +43,9 @@ variable "kubernetes" {
     cluster_ca_certificate = optional(string)
     token                  = optional(string)
   })
-  default  = {}
-  nullable = false
+  sensitive = true
+  default   = {}
+  nullable  = false
 
   validation {
     condition = (

@@ -185,3 +185,5 @@ module "flux_operator_bootstrap" {
 - `timeout`: global bootstrap wait timeout used by the script, watcher, and provider-side Job waiting
 - `ttl_after_finished`: TTL for finished bootstrap Jobs whenever the host-side watcher will not delete the Job
 - `debug_fault_injection_message`: testing-only fault injection that forces the job to fail after printing the supplied message
+
+**Note**: No sensitive inputs are stored in Terraform state.

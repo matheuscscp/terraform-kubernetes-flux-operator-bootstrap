@@ -42,6 +42,22 @@ prerequisite_configmap_value() {
     -o jsonpath='{.data.value}'
 }
 
+assert_no_secret_material_in_state() {
+  tf_dir="$1"
+
+  while IFS= read -r state_file; do
+    if grep -F "bootstrap-managed" "${state_file}" >/dev/null; then
+      echo "Managed Secret manifest name leaked into Terraform state: ${state_file}" >&2
+      exit 1
+    fi
+
+    if grep -F "value\":\"expected" "${state_file}" >/dev/null || grep -F "expected" "${state_file}" >/dev/null; then
+      echo "Managed Secret payload leaked into Terraform state: ${state_file}" >&2
+      exit 1
+    fi
+  done < <(find "${tf_dir}" -maxdepth 1 -type f \( -name 'terraform.tfstate' -o -name 'terraform.tfstate.*' \) | sort)
+}
+
 assert_flux_runtime_ready() {
   kubectl --context "kind-${cluster_name}" -n flux-system wait \
     --for=condition=Ready \
@@ -220,6 +236,8 @@ note "Verifying FluxInstance and Flux workloads are ready"
 assert_flux_runtime_ready
 note "Verifying ordered prerequisites and managed secrets were applied"
 assert_bootstrap_inputs_applied
+note "Verifying managed secret material did not land in Terraform state"
+assert_no_secret_material_in_state "${success_tf_dir}"
 
 section "Idempotency"
 note "Introducing drift in the managed Secret and prerequisite ConfigMap"
@@ -234,6 +252,8 @@ note "Running second bootstrap apply to verify idempotent rerun"
 terraform -chdir="${success_tf_dir}" apply -no-color -auto-approve
 note "Re-verifying Flux runtime after idempotent rerun"
 assert_flux_runtime_ready
+note "Re-verifying managed secret material did not land in Terraform state"
+assert_no_secret_material_in_state "${success_tf_dir}"
 if [ "$(secret_value)" != "expected" ]; then
   echo "Managed Secret drift was not corrected by the second apply" >&2
   exit 1
@@ -269,6 +289,8 @@ note "Initializing provider-wait scenario"
 terraform -chdir="${provider_wait_tf_dir}" init -no-color -backend=false
 note "Running provider-wait bootstrap apply"
 terraform -chdir="${provider_wait_tf_dir}" apply -no-color -auto-approve
+note "Verifying provider-wait state is also free of managed secret material"
+assert_no_secret_material_in_state "${provider_wait_tf_dir}"
 note "Waiting for provider-wait bootstrap Job to be garbage-collected by TTL"
 for _ in $(seq 1 15); do
   if ! kubectl --context "kind-${cluster_name}" -n flux-operator-bootstrap-provider-wait get job flux-operator-bootstrap >/dev/null 2>&1; then
@@ -288,6 +310,8 @@ note "Initializing no-wait scenario"
 terraform -chdir="${no_wait_tf_dir}" init -no-color -backend=false
 note "Running no-wait bootstrap apply"
 terraform -chdir="${no_wait_tf_dir}" apply -no-color -auto-approve
+note "Verifying no-wait state is also free of managed secret material"
+assert_no_secret_material_in_state "${no_wait_tf_dir}"
 note "Waiting for no-wait bootstrap Job to be garbage-collected by TTL"
 for _ in $(seq 1 15); do
   if ! kubectl --context "kind-${cluster_name}" -n flux-operator-bootstrap-no-wait get job flux-operator-bootstrap >/dev/null 2>&1; then

@@ -43,6 +43,13 @@ prerequisite_configmap_value() {
     -o jsonpath='{.data.value}'
 }
 
+secret_has_field_manager() {
+  manager="$1"
+
+  kubectl --context "kind-${cluster_name}" -n flux-system get secret/bootstrap-managed \
+    -o jsonpath='{range .metadata.managedFields[*]}{.manager}{"\n"}{end}' | grep -Fx "${manager}" >/dev/null
+}
+
 assert_no_secret_material_in_state() {
   tf_dir="$1"
 
@@ -241,12 +248,23 @@ assert_no_secret_material_in_state "${success_tf_dir}"
 
 section "Idempotency"
 note "Introducing drift in the managed Secret and prerequisite ConfigMap"
-kubectl --context "kind-${cluster_name}" -n flux-system patch secret bootstrap-managed \
-  --type merge \
-  -p '{"data":{"value":"ZHJpZnRlZA=="}}' >/dev/null
+kubectl --context "kind-${cluster_name}" apply --server-side --force-conflicts --field-manager=e2e-drift-manager -f - >/dev/null <<'YAML'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bootstrap-managed
+  namespace: flux-system
+type: Opaque
+stringData:
+  value: drifted
+YAML
 kubectl --context "kind-${cluster_name}" -n bootstrap-prereq patch configmap bootstrap-prereq \
   --type merge \
   -p '{"data":{"value":"drifted"}}' >/dev/null
+if ! secret_has_field_manager "e2e-drift-manager"; then
+  echo "Managed Secret was not updated with the e2e drift field manager" >&2
+  exit 1
+fi
 
 note "Running second bootstrap apply to verify idempotent rerun"
 terraform -chdir="${success_tf_dir}" apply -no-color -auto-approve
@@ -256,6 +274,10 @@ note "Re-verifying managed secret material did not land in Terraform state"
 assert_no_secret_material_in_state "${success_tf_dir}"
 if [ "$(secret_value)" != "expected" ]; then
   echo "Managed Secret drift was not corrected by the second apply" >&2
+  exit 1
+fi
+if secret_has_field_manager "e2e-drift-manager"; then
+  echo "Managed Secret still contains the e2e drift field manager after reconciliation" >&2
   exit 1
 fi
 if [ "$(prerequisite_configmap_value)" != "drifted" ]; then

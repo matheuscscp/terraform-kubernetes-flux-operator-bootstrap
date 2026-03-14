@@ -98,11 +98,9 @@ provider "kubernetes" {
 }
 
 module "flux_operator_bootstrap" {
-  source  = "matheuscscp/flux-operator-bootstrap/kubernetes"
-  version = "0.0.2"
-
-  # Keep image_tag aligned with the module version.
-  image_tag = "v0.0.2"
+  source    = "matheuscscp/flux-operator-bootstrap/kubernetes"
+  version   = "0.0.2"
+  image_tag = "v0.0.2" # Keep image_tag aligned with the module version.
 
   # Required for the kubectl watcher.
   kubernetes = {
@@ -147,11 +145,9 @@ provider "kubernetes" {
 }
 
 module "flux_operator_bootstrap" {
-  source  = "matheuscscp/flux-operator-bootstrap/kubernetes"
-  version = "0.0.2"
-
-  # Keep image_tag aligned with the module version.
-  image_tag = "v0.0.2"
+  source    = "matheuscscp/flux-operator-bootstrap/kubernetes"
+  version   = "0.0.2"
+  image_tag = "v0.0.2" # Keep image_tag aligned with the module version.
 
   use_kubectl_watcher = false
   ttl_after_finished  = "5m"

@@ -231,6 +231,12 @@ reconcile_secret_document() {
   fi
 
   log "~ Secret ${namespace}/${manifest_name} (${secret_state})"
+  if kubectl get secret "${manifest_name}" -n "${namespace}" >/dev/null 2>&1; then
+    if ! kubectl patch secret "${manifest_name}" -n "${namespace}" --type merge -p '{"metadata":{"managedFields":[{}]}}' >/dev/null; then
+      fail "Failed to reset field managers for Secret ${namespace}/${manifest_name}"
+      return 1
+    fi
+  fi
   kubectl apply --server-side --force-conflicts --field-manager="${field_manager}" -f "${manifest_file}" -n "${namespace}" >/dev/null
 }
 

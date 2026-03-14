@@ -65,6 +65,7 @@ module "flux_operator_bootstrap" {
     tag = "0.1.0"
   }
 
+  # Required for the kubectl watcher.
   kubernetes = {
     host                   = data.aws_eks_cluster.this.endpoint
     cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)

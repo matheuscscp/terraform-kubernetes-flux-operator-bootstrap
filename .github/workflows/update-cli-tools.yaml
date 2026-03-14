@@ -1,0 +1,72 @@
+name: update-cli-tools
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Update Helm and kubectl versions
+        id: versions
+        run: |
+          set -euo pipefail
+
+          current_helm_version="$(sed -n 's/^ARG HELM_VERSION=//p' Dockerfile)"
+          current_kubectl_version="$(sed -n 's/^ARG KUBECTL_VERSION=//p' Dockerfile)"
+
+          helm_version="$(python3 - <<'PY'
+          import json
+          import urllib.request
+
+          with urllib.request.urlopen("https://api.github.com/repos/helm/helm/releases/latest") as response:
+              print(json.load(response)["tag_name"])
+          PY
+          )"
+
+          kubectl_version="$(curl -fsSL https://dl.k8s.io/release/stable.txt)"
+
+          echo "helm_version=${helm_version}" >> "${GITHUB_OUTPUT}"
+          echo "kubectl_version=${kubectl_version}" >> "${GITHUB_OUTPUT}"
+
+          sed -i "s/^ARG HELM_VERSION=.*/ARG HELM_VERSION=${helm_version}/" Dockerfile
+          sed -i "s/^ARG KUBECTL_VERSION=.*/ARG KUBECTL_VERSION=${kubectl_version}/" Dockerfile
+
+          changes=()
+          if [ "${current_kubectl_version}" != "${kubectl_version}" ]; then
+            changes+=("kubectl to ${kubectl_version}")
+          fi
+          if [ "${current_helm_version}" != "${helm_version}" ]; then
+            changes+=("helm to ${helm_version}")
+          fi
+
+          if [ "${#changes[@]}" -eq 0 ]; then
+            message="Upgrade kubectl and helm"
+          elif [ "${#changes[@]}" -eq 1 ]; then
+            message="Upgrade ${changes[0]}"
+          else
+            message="Upgrade ${changes[0]} and ${changes[1]}"
+          fi
+
+          echo "message=${message}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@271a8d0340265f705b14b6d32b9829c1cb33d45e # v7.0.8
+        with:
+          branch: automation/update-cli-tools
+          commit-message: ${{ steps.versions.outputs.message }}
+          title: ${{ steps.versions.outputs.message }}
+          body: |
+            Automated update of the Helm and kubectl versions used in the Dockerfile.
+          delete-branch: true

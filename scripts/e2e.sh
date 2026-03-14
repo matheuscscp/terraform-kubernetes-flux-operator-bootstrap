@@ -8,6 +8,7 @@ cluster_name="flux-operator-bootstrap-e2e"
 image_repository="terraform-kubernetes-flux-operator-bootstrap"
 image_tag="dev"
 image="${image_repository}:${image_tag}"
+module_image="ghcr.io/matheuscscp/terraform-kubernetes-flux-operator-bootstrap:${image_tag}"
 success_tf_dir="$(mktemp -d)"
 provider_wait_tf_dir="$(mktemp -d)"
 no_wait_tf_dir="$(mktemp -d)"
@@ -153,10 +154,7 @@ module "bootstrap" {
   ttl_after_finished  = "${ttl_after_finished}"
 ${watcher_inputs}
 
-  image = {
-    repository = "${image_repository}"
-    tag        = "${image_tag}"
-  }
+  image_tag = "${image_tag}"
 
   debug_fault_injection_message = "${fault_injection_message}"
 
@@ -211,8 +209,10 @@ note "Resetting kind cluster ${cluster_name}"
 kind delete cluster --name "${cluster_name}" || true
 note "Creating kind cluster ${cluster_name}"
 kind create cluster --name "${cluster_name}"
-note "Loading locally built image ${image}"
-kind load docker-image "${image}" --name "${cluster_name}"
+note "Tagging local image ${image} as ${module_image} for module consumption"
+docker tag "${image}" "${module_image}"
+note "Loading locally built image ${module_image}"
+kind load docker-image "${module_image}" --name "${cluster_name}"
 note "Creating short-lived watcher credentials"
 kubectl --context "kind-${cluster_name}" create namespace watcher-auth --dry-run=client -o yaml | kubectl --context "kind-${cluster_name}" apply -f -
 kubectl --context "kind-${cluster_name}" -n watcher-auth create serviceaccount terraform-watcher --dry-run=client -o yaml | kubectl --context "kind-${cluster_name}" apply -f -

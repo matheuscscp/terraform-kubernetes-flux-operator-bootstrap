@@ -66,14 +66,10 @@ variable "bootstrap_namespace" {
   nullable    = false
 }
 
-variable "image" {
-  description = "Bootstrap job container image configuration."
-  type = object({
-    repository = optional(string, "ghcr.io/controlplaneio-fluxcd/terraform-kubernetes-flux-operator-bootstrap")
-    tag        = optional(string, "latest")
-  })
-  default  = {}
-  nullable = false
+variable "image_tag" {
+  description = "Bootstrap job container image tag. This should match the module version with a leading v, for example module version 0.0.2 with image_tag = v0.0.2."
+  type        = string
+  nullable    = false
 }
 
 variable "wait" {

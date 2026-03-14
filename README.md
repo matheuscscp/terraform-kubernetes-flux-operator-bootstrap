@@ -101,10 +101,8 @@ module "flux_operator_bootstrap" {
   source  = "matheuscscp/flux-operator-bootstrap/kubernetes"
   version = "0.0.2"
 
-  # Keep image.tag aligned with the module version.
-  image = {
-    tag = "v0.0.2"
-  }
+  # Keep image_tag aligned with the module version.
+  image_tag = "v0.0.2"
 
   # Required for the kubectl watcher.
   kubernetes = {
@@ -152,10 +150,8 @@ module "flux_operator_bootstrap" {
   source  = "matheuscscp/flux-operator-bootstrap/kubernetes"
   version = "0.0.2"
 
-  # Keep image.tag aligned with the module version.
-  image = {
-    tag = "v0.0.2"
-  }
+  # Keep image_tag aligned with the module version.
+  image_tag = "v0.0.2"
 
   use_kubectl_watcher = false
   ttl_after_finished  = "5m"
@@ -179,8 +175,7 @@ module "flux_operator_bootstrap" {
 - `kubernetes.cluster_ca_certificate`: PEM-encoded cluster CA certificate for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true
 - `kubernetes.token`: bearer token for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true
 - `bootstrap_namespace`: namespace for Terraform-managed bootstrap resources
-- `image.repository`: bootstrap job image repository
-- `image.tag`: bootstrap job image tag
+- `image_tag`: bootstrap job image tag; this should match the module version with a leading `v`
 - `wait`: master switch for waiting; enables `flux-operator wait instance` in the Job and Terraform-side waiting via the watcher or provider
 - `timeout`: global bootstrap wait timeout used by the script, watcher, and provider-side Job waiting
 - `ttl_after_finished`: TTL for finished bootstrap Jobs whenever the host-side watcher will not delete the Job

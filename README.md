@@ -25,24 +25,20 @@ The module creates:
 - a dedicated bootstrap namespace
 - a `ServiceAccount` for the bootstrap pod
 - a `ClusterRoleBinding` granting `cluster-admin` to that `ServiceAccount`
-- a `ConfigMap` containing the provided `FluxInstance` YAML and `prerequisites_yaml`
+- a `ConfigMap` containing the provided `flux_instance_yaml` and `prerequisites_yaml`
 - an optional write-only `Secret` in the bootstrap namespace containing `secrets_yaml`
 - a `Job` that (in this order):
   - applies `prerequisites_yaml` in the provided order with create-if-missing semantics
-  - creates the target namespace from the `FluxInstance` if missing
+  - creates the target namespace from the `flux_instance_yaml` if missing
   - reconciles `secrets_yaml` into the target namespace with server-side apply
   - installs the `flux-operator` Helm release if missing
-  - applies the `FluxInstance` if missing
+  - applies `flux_instance_yaml` with create-if-missing semantics
   - optionally waits for the instance to become ready
   - deletes its temporary `ServiceAccount` and `ClusterRoleBinding` before exiting
 - a host-side watcher that:
   - polls the Job every 2 seconds until it succeeds or fails
   - prints pod logs before failing Terraform if the Job fails or times out
   - deletes the Job after a successful watched run so the next apply can recreate it
-
-The namespace referenced by the provided `FluxInstance` manifest is created by
-the bootstrap Job if it does not already exist. Terraform does not manage that
-target namespace directly.
 
 `prerequisites_yaml` and `secrets_yaml` exist to cover the bootstrap-time
 resources that must be present inside the cluster before Flux, while still
@@ -59,29 +55,35 @@ Terraform applies will correct drift for those Secrets instead of only creating
 them once. This managed approach is intentional for bootstrap secrets, which
 often include credentials that need to be rotated and kept up to date. It's
 assumed that the source-of-truth for those Secrets is wired into Terraform
-variables that ultimately feed into the `secrets_yaml` input and that the same
+variables that ultimately feed into the `secrets_yaml` input, and the same
 Secrets are **not applied** by Flux's kustomize-controller SOPS integration,
-hence they require reconciliation.
+hence they require reconciliation. This design choice is based on the fact
+that wiring SOPS-managed secrets into this Terraform input field could be
+hard, impose chicken-and-egg problems, etc. It's recommended to keep the
+secrets managed here as simple as possible, only secrets strictly required
+for the `FluxInstance` to come up healthy.
 
-The `kubernetes` input is only used by the optional host-side `kubectl`
-watcher. Regardless of whether you use that watcher, callers must still
-configure the HashiCorp Kubernetes provider for the module itself, because the
-module creates Kubernetes resources such as the bootstrap namespace, ConfigMap,
-and Job through that provider.
+The `kubernetes` input is only used by the default (but optional) host-side
+`kubectl` watcher. Regardless of whether you use that watcher, callers must
+still configure the HashiCorp Kubernetes provider for the module itself,
+because the module creates Kubernetes resources such as the bootstrap
+namespace, ConfigMap, and Job through that provider.
 
 When `wait = true` and `use_kubectl_watcher = true` (the default), the machine
 running Terraform must have `kubectl` and `bash` available in `PATH`. In this
-mode the module uses a `null_resource` to watch the bootstrap Job and wire pod
-logs into Terraform failures.
+mode the module uses a `null_resource` to watch the bootstrap Job, wire pod
+logs into Terraform failures, and delete the Job at the end (the Job is deleted
+so it can be recreated on the next apply, which allows it to run as a reconciler).
 
 When `wait = true` and `use_kubectl_watcher = false`, the module skips the
 host-side watcher and relies on the Terraform Kubernetes provider to wait for
-Job completion. In that mode the Job gets a TTL and no host `kubectl`
-credentials are required.
+Job completion. In that mode the Job gets a TTL and no host `kubectl` or
+credentials are required (the HashiCorp Kubernetes provider still needs
+credentials).
 
-When `wait = false`, the module does not wait at all. The host-side watcher is
-skipped, provider-side Job waiting is disabled, and the finished Job is cleaned
-up by TTL.
+When `wait = false`, the module does not wait at all. The host-side watcher
+is skipped, provider-side Job waiting is disabled, and the Job gets a TTL
+for automatic cleanup.
 
 TTL cleanup starts only after the Job reaches a terminal state (`Complete` or
 `Failed`), not immediately after Terraform creates it.
@@ -160,9 +162,22 @@ module "flux_operator_bootstrap" {
     file("${path.root}/clusters/staging/flux-system/eks-nodepools.yaml"),
   ]
 
-  secrets_yaml = file("${path.root}/clusters/staging/flux-system/bootstrap-secrets.yaml")
   flux_instance_yaml = file("${path.root}/clusters/staging/flux-system/flux-instance.yaml")
 }
+```
+
+If your Terraform root module lives below the Git repo root, anchor `file()`
+paths from `path.root`, for example:
+
+```text
+repo/
+├── clusters/staging/flux-system/flux-instance.yaml
+└── terraform/
+    └── main.tf  # path.root
+```
+
+```hcl
+flux_instance_yaml = file("${path.root}/../clusters/staging/flux-system/flux-instance.yaml")
 ```
 
 ## Inputs

@@ -38,7 +38,7 @@ The module creates:
 - a host-side watcher that:
   - polls the Job every 2 seconds until it succeeds or fails
   - prints pod logs before failing Terraform if the Job fails or times out
-  - deletes the Job after a successful watched run so the next apply can recreate it
+  - deletes the Job after a watched run so the next apply can recreate it
 
 `prerequisites_paths` and `secrets_yaml` exist to cover the bootstrap-time
 resources that must be present inside the cluster before Flux, while still

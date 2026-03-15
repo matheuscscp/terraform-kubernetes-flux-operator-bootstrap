@@ -8,7 +8,7 @@ locals {
   service_account_name  = "flux-operator-bootstrap"
   cluster_role_binding  = "flux-operator-bootstrap-${local.bootstrap_namespace}"
   job_name              = "flux-operator-bootstrap"
-  image                 = "ghcr.io/matheuscscp/terraform-kubernetes-flux-operator-bootstrap:${var.image_tag}"
+  image                 = "${var.image_repository}:${var.image_tag}"
   has_secrets_yaml      = trimspace(var.secrets_yaml) != ""
   secrets_yaml_revision = local.has_secrets_yaml ? parseint(substr(sha256(var.secrets_yaml), 0, 8), 16) : 0
   prerequisite_files    = { for idx, path in var.prerequisites_paths : format("prerequisite-%03d.yaml", idx) => file(path) }

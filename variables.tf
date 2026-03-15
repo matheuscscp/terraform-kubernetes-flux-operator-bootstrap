@@ -76,6 +76,13 @@ variable "bootstrap_namespace" {
   nullable    = false
 }
 
+variable "image_repository" {
+  description = "Bootstrap job container image repository. Override this for mirrored or air-gapped environments."
+  type        = string
+  default     = "ghcr.io/matheuscscp/terraform-kubernetes-flux-operator-bootstrap"
+  nullable    = false
+}
+
 variable "image_tag" {
   description = "Bootstrap job container image tag. Keep this aligned with the module version and include the leading v, for example v0.0.2."
   type        = string

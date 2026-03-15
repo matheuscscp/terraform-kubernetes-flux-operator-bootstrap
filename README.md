@@ -190,6 +190,7 @@ flux_instance_path = "${path.root}/../clusters/staging/flux-system/flux-instance
 - `kubernetes.cluster_ca_certificate` (`Conditionally required`): PEM-encoded cluster CA certificate for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true
 - `kubernetes.token` (`Conditionally required`): bearer token for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true
 - `bootstrap_namespace` (`Default: "flux-operator-bootstrap"`): namespace where the Terraform-managed bootstrap transport resources are created
+- `image_repository` (`Default: "ghcr.io/matheuscscp/terraform-kubernetes-flux-operator-bootstrap"`): bootstrap job container image repository; override this for mirrored or air-gapped environments
 - `image_tag` (`Required`): bootstrap job container image tag; keep this aligned with the module version and include the leading `v`
 - `wait` (`Default: true`): master switch for waiting; enables `flux-operator wait instance` in the Job and Terraform-side waiting via the watcher or provider
 - `timeout` (`Default: "5m"`): shared timeout for FluxInstance readiness waiting and Terraform Job resource timeouts

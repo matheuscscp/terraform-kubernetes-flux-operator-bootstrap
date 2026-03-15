@@ -180,6 +180,29 @@ wait_for_flux_instance_crd() {
   return 1
 }
 
+secret_has_foreign_field_managers() {
+  secret_name="$1"
+
+  managers="$(
+    kubectl get secret "${secret_name}" -n "${namespace}" \
+      -o jsonpath='{range .metadata.managedFields[*]}{.manager}{"\n"}{end}' 2>/dev/null || true
+  )"
+
+  if [ -z "${managers}" ]; then
+    return 1
+  fi
+
+  printf '%s\n' "${managers}" | /busybox/busybox awk -v current="${field_manager}" '
+    NF > 0 && $0 != current {
+      found = 1
+      exit
+    }
+    END {
+      exit(found ? 0 : 1)
+    }
+  '
+}
+
 reconcile_secret_document() {
   manifest_file="$1"
   manifest_kind="$(extract_top_level_value "${manifest_file}" kind)"
@@ -199,6 +222,13 @@ reconcile_secret_document() {
   if [ -n "${manifest_namespace}" ] && [ "${manifest_namespace}" != "${namespace}" ]; then
     fail "Secret ${manifest_name} must omit metadata.namespace or set it to ${namespace}"
     return 1
+  fi
+
+  if kubectl get secret "${manifest_name}" -n "${namespace}" >/dev/null 2>&1; then
+    if secret_has_foreign_field_managers "${manifest_name}"; then
+      log "- delete Secret ${namespace}/${manifest_name} (foreign field managers)"
+      kubectl delete secret "${manifest_name}" -n "${namespace}" >/dev/null
+    fi
   fi
 
   if ! dry_run_output="$(kubectl apply --server-side --dry-run=server --force-conflicts --field-manager="${field_manager}" -f "${manifest_file}" -n "${namespace}" 2>&1)"; then
@@ -232,12 +262,6 @@ reconcile_secret_document() {
   fi
 
   log "~ Secret ${namespace}/${manifest_name} (${secret_state})"
-  if kubectl get secret "${manifest_name}" -n "${namespace}" >/dev/null 2>&1; then
-    if ! kubectl patch secret "${manifest_name}" -n "${namespace}" --type merge -p '{"metadata":{"managedFields":[{}]}}' >/dev/null; then
-      fail "Failed to reset field managers for Secret ${namespace}/${manifest_name}"
-      return 1
-    fi
-  fi
   kubectl apply --server-side --force-conflicts --field-manager="${field_manager}" -f "${manifest_file}" -n "${namespace}" >/dev/null
 }
 

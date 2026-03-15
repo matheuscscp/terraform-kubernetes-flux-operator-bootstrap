@@ -40,6 +40,13 @@ secret_value() {
     -o jsonpath='{.data.value}' | base64 --decode
 }
 
+secret_uid() {
+  secret_name="$1"
+
+  kubectl --context "kind-${cluster_name}" -n flux-system get "secret/${secret_name}" \
+    -o jsonpath='{.metadata.uid}'
+}
+
 prerequisite_configmap_value() {
   kubectl --context "kind-${cluster_name}" -n bootstrap-prereq get configmap/bootstrap-prereq \
     -o jsonpath='{.data.value}'
@@ -300,6 +307,7 @@ note "Verifying FluxInstance and Flux workloads are ready"
 assert_flux_runtime_ready
 note "Verifying ordered prerequisites and managed secrets were applied"
 assert_bootstrap_inputs_applied
+initial_managed_secret_uid="$(secret_uid bootstrap-managed)"
 if [ "$(inventory_secret_names flux-operator-bootstrap)" != "$(printf 'bootstrap-managed\nbootstrap-managed-removed')" ]; then
   echo "Managed secret inventory was not created with the expected entries" >&2
   exit 1
@@ -336,6 +344,10 @@ note "Re-verifying managed secret material did not land in Terraform state"
 assert_no_secret_material_in_state "${success_tf_dir}"
 if [ "$(secret_value bootstrap-managed)" != "expected" ]; then
   echo "Managed Secret drift was not corrected by the second apply" >&2
+  exit 1
+fi
+if [ "$(secret_uid bootstrap-managed)" = "${initial_managed_secret_uid}" ]; then
+  echo "Managed Secret was not recreated after detecting a foreign field manager" >&2
   exit 1
 fi
 if secret_has_field_manager "e2e-drift-manager"; then

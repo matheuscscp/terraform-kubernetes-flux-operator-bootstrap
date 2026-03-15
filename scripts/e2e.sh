@@ -34,13 +34,28 @@ kubectl_get_flux_operator_resources() {
 }
 
 secret_value() {
-  kubectl --context "kind-${cluster_name}" -n flux-system get secret/bootstrap-managed \
+  secret_name="$1"
+
+  kubectl --context "kind-${cluster_name}" -n flux-system get "secret/${secret_name}" \
     -o jsonpath='{.data.value}' | base64 --decode
 }
 
 prerequisite_configmap_value() {
   kubectl --context "kind-${cluster_name}" -n bootstrap-prereq get configmap/bootstrap-prereq \
     -o jsonpath='{.data.value}'
+}
+
+inventory_secret_names() {
+  bootstrap_namespace="$1"
+
+  kubectl --context "kind-${cluster_name}" -n "${bootstrap_namespace}" get secret/flux-operator-bootstrap-inventory \
+    -o go-template='{{index .data "secret-names"}}' | base64 --decode
+}
+
+target_secret_exists() {
+  secret_name="$1"
+
+  kubectl --context "kind-${cluster_name}" -n flux-system get "secret/${secret_name}" >/dev/null 2>&1
 }
 
 secret_has_field_manager() {
@@ -59,8 +74,18 @@ assert_no_secret_material_in_state() {
       exit 1
     fi
 
+    if grep -F "bootstrap-managed-removed" "${state_file}" >/dev/null; then
+      echo "Removed managed Secret manifest name leaked into Terraform state: ${state_file}" >&2
+      exit 1
+    fi
+
     if grep -F "value\":\"expected" "${state_file}" >/dev/null || grep -F "expected" "${state_file}" >/dev/null; then
       echo "Managed Secret payload leaked into Terraform state: ${state_file}" >&2
+      exit 1
+    fi
+
+    if grep -F "temporary" "${state_file}" >/dev/null; then
+      echo "Removed managed Secret payload leaked into Terraform state: ${state_file}" >&2
       exit 1
     fi
   done < <(find "${tf_dir}" -maxdepth 1 -type f \( -name 'terraform.tfstate' -o -name 'terraform.tfstate.*' \) | sort)
@@ -89,8 +114,13 @@ assert_bootstrap_inputs_applied() {
     exit 1
   fi
 
-  if [ "$(secret_value)" != "expected" ]; then
+  if [ "$(secret_value bootstrap-managed)" != "expected" ]; then
     echo "Managed Secret did not contain the expected initial value" >&2
+    exit 1
+  fi
+
+  if [ "$(secret_value bootstrap-managed-removed)" != "temporary" ]; then
+    echo "Managed Secret slated for removal did not contain the expected initial value" >&2
     exit 1
   fi
 }
@@ -120,6 +150,7 @@ render_root_module() {
   use_kubectl_watcher="$4"
   ttl_after_finished="$5"
   wait="$6"
+  secrets_mode="$7"
   watcher_inputs=""
 
   if [ "${use_kubectl_watcher}" = "true" ] && [ "${wait}" = "true" ]; then
@@ -134,6 +165,38 @@ PEM
 EOF
 )
   fi
+
+  managed_secrets_yaml="$(
+    if [ "${secrets_mode}" = "two" ]; then
+      cat <<'YAML'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bootstrap-managed
+type: Opaque
+stringData:
+  value: expected
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bootstrap-managed-removed
+type: Opaque
+stringData:
+  value: temporary
+YAML
+    else
+      cat <<'YAML'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bootstrap-managed
+type: Opaque
+stringData:
+  value: expected
+YAML
+    fi
+  )"
 
   cat > "${tf_dir}/main.tf" <<EOF
 terraform {
@@ -185,13 +248,7 @@ YAML
   ]
 
   secrets_yaml = <<YAML
-apiVersion: v1
-kind: Secret
-metadata:
-  name: bootstrap-managed
-type: Opaque
-stringData:
-  value: expected
+${managed_secrets_yaml}
 YAML
 
   flux_instance_yaml = <<YAML
@@ -233,7 +290,7 @@ kubernetes_token="$(kubectl --context "kind-${cluster_name}" -n watcher-auth cre
 
 section "Happy Path"
 note "Rendering success scenario Terraform root"
-render_root_module "${success_tf_dir}" "flux-operator-bootstrap" "" "true" "5m" "true"
+render_root_module "${success_tf_dir}" "flux-operator-bootstrap" "" "true" "5m" "true" "two"
 note "Initializing success scenario"
 terraform -chdir="${success_tf_dir}" init -no-color -backend=false
 
@@ -243,11 +300,15 @@ note "Verifying FluxInstance and Flux workloads are ready"
 assert_flux_runtime_ready
 note "Verifying ordered prerequisites and managed secrets were applied"
 assert_bootstrap_inputs_applied
+if [ "$(inventory_secret_names flux-operator-bootstrap)" != "$(printf 'bootstrap-managed\nbootstrap-managed-removed')" ]; then
+  echo "Managed secret inventory was not created with the expected entries" >&2
+  exit 1
+fi
 note "Verifying managed secret material did not land in Terraform state"
 assert_no_secret_material_in_state "${success_tf_dir}"
 
 section "Idempotency"
-note "Introducing drift in the managed Secret and prerequisite ConfigMap"
+note "Introducing drift, then removing one managed Secret from desired state"
 kubectl --context "kind-${cluster_name}" apply --server-side --force-conflicts --field-manager=e2e-drift-manager -f - >/dev/null <<'YAML'
 apiVersion: v1
 kind: Secret
@@ -265,6 +326,7 @@ if ! secret_has_field_manager "e2e-drift-manager"; then
   echo "Managed Secret was not updated with the e2e drift field manager" >&2
   exit 1
 fi
+render_root_module "${success_tf_dir}" "flux-operator-bootstrap" "" "true" "5m" "true" "one"
 
 note "Running second bootstrap apply to verify idempotent rerun"
 terraform -chdir="${success_tf_dir}" apply -no-color -auto-approve
@@ -272,12 +334,20 @@ note "Re-verifying Flux runtime after idempotent rerun"
 assert_flux_runtime_ready
 note "Re-verifying managed secret material did not land in Terraform state"
 assert_no_secret_material_in_state "${success_tf_dir}"
-if [ "$(secret_value)" != "expected" ]; then
+if [ "$(secret_value bootstrap-managed)" != "expected" ]; then
   echo "Managed Secret drift was not corrected by the second apply" >&2
   exit 1
 fi
 if secret_has_field_manager "e2e-drift-manager"; then
   echo "Managed Secret still contains the e2e drift field manager after reconciliation" >&2
+  exit 1
+fi
+if target_secret_exists "bootstrap-managed-removed"; then
+  echo "Removed managed Secret was not garbage-collected by the second apply" >&2
+  exit 1
+fi
+if [ "$(inventory_secret_names flux-operator-bootstrap)" != "bootstrap-managed" ]; then
+  echo "Managed secret inventory was not updated after removing a Secret from desired state" >&2
   exit 1
 fi
 if [ "$(prerequisite_configmap_value)" != "drifted" ]; then
@@ -306,7 +376,7 @@ fi
 
 section "Provider Wait Mode"
 note "Rendering provider-wait scenario Terraform root"
-render_root_module "${provider_wait_tf_dir}" "flux-operator-bootstrap-provider-wait" "" "false" "5s" "true"
+render_root_module "${provider_wait_tf_dir}" "flux-operator-bootstrap-provider-wait" "" "false" "5s" "true" "one"
 note "Initializing provider-wait scenario"
 terraform -chdir="${provider_wait_tf_dir}" init -no-color -backend=false
 note "Running provider-wait bootstrap apply"
@@ -327,7 +397,7 @@ fi
 
 section "No Wait Mode"
 note "Rendering no-wait scenario Terraform root"
-render_root_module "${no_wait_tf_dir}" "flux-operator-bootstrap-no-wait" "" "true" "5s" "false"
+render_root_module "${no_wait_tf_dir}" "flux-operator-bootstrap-no-wait" "" "true" "5s" "false" "one"
 note "Initializing no-wait scenario"
 terraform -chdir="${no_wait_tf_dir}" init -no-color -backend=false
 note "Running no-wait bootstrap apply"
@@ -352,7 +422,7 @@ fi
 
 section "Failure Path"
 note "Rendering failure scenario Terraform root"
-render_root_module "${failure_tf_dir}" "flux-operator-bootstrap-failure" "intentional e2e fault injection" "true" "5m" "true"
+render_root_module "${failure_tf_dir}" "flux-operator-bootstrap-failure" "intentional e2e fault injection" "true" "5m" "true" "one"
 note "Initializing failure scenario"
 terraform -chdir="${failure_tf_dir}" init -no-color -backend=false
 

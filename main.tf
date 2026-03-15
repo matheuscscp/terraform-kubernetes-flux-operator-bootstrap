@@ -3,6 +3,7 @@ locals {
   bootstrap_namespace   = var.bootstrap_namespace
   config_map_name       = "flux-operator-bootstrap"
   secrets_secret_name   = "flux-operator-bootstrap"
+  inventory_secret_name = "flux-operator-bootstrap-inventory"
   service_account_name  = "flux-operator-bootstrap"
   cluster_role_binding  = "flux-operator-bootstrap-${local.bootstrap_namespace}"
   job_name              = "flux-operator-bootstrap"
@@ -153,6 +154,11 @@ resource "kubernetes_job_v1" "this" {
           env {
             name  = "DEBUG_FAULT_INJECTION_MESSAGE"
             value = var.debug_fault_injection_message
+          }
+
+          env {
+            name  = "INVENTORY_SECRET_NAME"
+            value = local.inventory_secret_name
           }
 
           dynamic "env" {

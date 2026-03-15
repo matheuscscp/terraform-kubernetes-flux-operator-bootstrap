@@ -9,6 +9,7 @@ timeout="${TIMEOUT:-5m}"
 bootstrap_namespace="${BOOTSTRAP_NAMESPACE:?BOOTSTRAP_NAMESPACE is required}"
 service_account_name="${SERVICE_ACCOUNT_NAME:?SERVICE_ACCOUNT_NAME is required}"
 cluster_role_binding_name="${CLUSTER_ROLE_BINDING_NAME:?CLUSTER_ROLE_BINDING_NAME is required}"
+inventory_secret_name="${INVENTORY_SECRET_NAME:-flux-operator-bootstrap-inventory}"
 debug_fault_injection_message="${DEBUG_FAULT_INJECTION_MESSAGE:-}"
 field_manager="flux-operator-bootstrap"
 
@@ -240,30 +241,97 @@ reconcile_secret_document() {
   kubectl apply --server-side --force-conflicts --field-manager="${field_manager}" -f "${manifest_file}" -n "${namespace}" >/dev/null
 }
 
-reconcile_secrets() {
-  scratch_dir="$1"
+load_inventory_secret_names() {
+  output_file="$1"
 
-  if [ -z "${secrets_file}" ] || [ ! -f "${secrets_file}" ]; then
-    log "No managed secrets to reconcile"
+  : > "${output_file}"
+
+  if ! kubectl get secret "${inventory_secret_name}" -n "${bootstrap_namespace}" >/dev/null 2>&1; then
     return 0
   fi
 
-  split_dir="${scratch_dir}/managed-secrets"
-  split_yaml_documents "${secrets_file}" "${split_dir}" "secret"
+  encoded_names="$(kubectl get secret "${inventory_secret_name}" -n "${bootstrap_namespace}" -o go-template='{{index .data "secret-names"}}')"
+  if [ -z "${encoded_names}" ]; then
+    return 0
+  fi
 
-  found_secret="false"
-  for manifest_file in "${split_dir}"/secret-*.yaml; do
-    if [ ! -f "${manifest_file}" ]; then
+  printf '%s' "${encoded_names}" | /busybox/busybox base64 -d > "${output_file}"
+}
+
+update_inventory_secret() {
+  names_file="$1"
+
+  inventory_names="$(/busybox/busybox cat "${names_file}")"
+
+  kubectl apply -f - >/dev/null <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ${inventory_secret_name}
+  namespace: ${bootstrap_namespace}
+type: Opaque
+stringData:
+  secret-names: |-
+$(printf '%s\n' "${inventory_names}" | /busybox/busybox sed 's/^/    /')
+EOF
+}
+
+garbage_collect_removed_secrets() {
+  previous_names_file="$1"
+  current_names_file="$2"
+
+  while IFS= read -r previous_name || [ -n "${previous_name}" ]; do
+    if [ -z "${previous_name}" ]; then
       continue
     fi
 
-    found_secret="true"
-    reconcile_secret_document "${manifest_file}"
-  done
+    if /busybox/busybox grep -Fx "${previous_name}" "${current_names_file}" >/dev/null 2>&1; then
+      continue
+    fi
 
-  if [ "${found_secret}" = "false" ]; then
+    log "- delete Secret ${namespace}/${previous_name}"
+    kubectl delete secret "${previous_name}" -n "${namespace}" --ignore-not-found=true >/dev/null
+  done < "${previous_names_file}"
+}
+
+reconcile_secrets() {
+  scratch_dir="$1"
+  previous_names_file="${scratch_dir}/previous-secret-names.txt"
+  current_names_file="${scratch_dir}/current-secret-names.txt"
+
+  load_inventory_secret_names "${previous_names_file}"
+  : > "${current_names_file}"
+
+  if [ -n "${secrets_file}" ] && [ -f "${secrets_file}" ]; then
+    split_dir="${scratch_dir}/managed-secrets"
+    split_yaml_documents "${secrets_file}" "${split_dir}" "secret"
+
+    found_secret="false"
+    for manifest_file in "${split_dir}"/secret-*.yaml; do
+      if [ ! -f "${manifest_file}" ]; then
+        continue
+      fi
+
+      found_secret="true"
+      current_secret_name="$(extract_manifest_metadata_value "${manifest_file}" name)"
+      if [ -z "${current_secret_name}" ]; then
+        fail "secrets_yaml contains a Secret without metadata.name"
+        return 1
+      fi
+      reconcile_secret_document "${manifest_file}"
+      printf '%s\n' "${current_secret_name}" >> "${current_names_file}"
+    done
+
+    if [ "${found_secret}" = "false" ]; then
+      log "No managed secrets"
+    fi
+  else
     log "No managed secrets"
   fi
+
+  /busybox/busybox sort -u -o "${current_names_file}" "${current_names_file}"
+  garbage_collect_removed_secrets "${previous_names_file}" "${current_names_file}"
+  update_inventory_secret "${current_names_file}"
 }
 
 cleanup() {

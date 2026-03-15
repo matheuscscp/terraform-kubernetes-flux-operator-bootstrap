@@ -106,6 +106,52 @@ split_yaml_documents() {
   ' "${input_file}"
 }
 
+count_yaml_documents() {
+  manifest_file="$1"
+
+  /busybox/busybox awk '
+    function flush() {
+      if (has_content) {
+        count++
+      }
+      has_content = 0
+    }
+
+    /^---[[:space:]]*$/ {
+      flush()
+      next
+    }
+
+    {
+      trimmed = $0
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", trimmed)
+      if (trimmed != "" && trimmed !~ /^#/) {
+        has_content = 1
+      }
+    }
+
+    END {
+      flush()
+      print count + 0
+    }
+  ' "${manifest_file}"
+}
+
+validate_flux_instance_file() {
+  document_count="$(count_yaml_documents "${flux_instance_file}")"
+  manifest_kind="$(extract_top_level_value "${flux_instance_file}" kind)"
+
+  if [ "${document_count}" != "1" ]; then
+    fail "FluxInstance manifest ${flux_instance_file} must contain exactly one YAML document"
+    return 1
+  fi
+
+  if [ "${manifest_kind}" != "FluxInstance" ]; then
+    fail "FluxInstance manifest ${flux_instance_file} must have kind FluxInstance, got ${manifest_kind:-<unknown>}"
+    return 1
+  fi
+}
+
 manifest_details() {
   manifest_file="$1"
   kubectl create --dry-run=client -f "${manifest_file}" -o jsonpath='{.kind}|{.metadata.name}|{.metadata.namespace}'
@@ -370,6 +416,10 @@ cleanup() {
     log "Failed to delete ClusterRoleBinding ${cluster_role_binding_name}"
   fi
 }
+
+if ! validate_flux_instance_file; then
+  exit 1
+fi
 
 namespace="$(extract_metadata_value namespace)"
 instance_name="$(extract_metadata_value name)"

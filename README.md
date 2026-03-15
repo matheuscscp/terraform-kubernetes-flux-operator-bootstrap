@@ -25,14 +25,14 @@ The module creates:
 - a dedicated bootstrap namespace
 - a `ServiceAccount` for the bootstrap pod
 - a `ClusterRoleBinding` granting `cluster-admin` to that `ServiceAccount`
-- a `ConfigMap` containing the provided `flux_instance_yaml` and `prerequisites_yaml`
+- a `ConfigMap` containing the manifest contents loaded from `flux_instance_path` and `prerequisites_paths`
 - an optional write-only `Secret` in the bootstrap namespace containing `secrets_yaml`
 - a `Job` that (in this order):
-  - applies `prerequisites_yaml` in the provided order with create-if-missing semantics
-  - creates the target namespace from the `flux_instance_yaml` if missing
+  - applies manifests from `prerequisites_paths` in the provided order with create-if-missing semantics
+  - creates the target namespace from the manifest loaded from `flux_instance_path` if missing
   - reconciles `secrets_yaml` into the target namespace with server-side apply
   - installs the `flux-operator` Helm release if missing
-  - applies `flux_instance_yaml` with create-if-missing semantics
+  - applies the manifest loaded from `flux_instance_path` with create-if-missing semantics
   - optionally waits for the instance to become ready
   - deletes its temporary `ServiceAccount` and `ClusterRoleBinding` before exiting
 - a host-side watcher that:
@@ -40,11 +40,11 @@ The module creates:
   - prints pod logs before failing Terraform if the Job fails or times out
   - deletes the Job after a successful watched run so the next apply can recreate it
 
-`prerequisites_yaml` and `secrets_yaml` exist to cover the bootstrap-time
+`prerequisites_paths` and `secrets_yaml` exist to cover the bootstrap-time
 resources that must be present inside the cluster before Flux, while still
 keeping the long-term ownership boundaries explicit.
 
-`prerequisites_yaml` is intentionally create-if-missing only. It is meant for
+`prerequisites_paths` is intentionally create-if-missing only. It is meant for
 bootstrap prerequisites that will later be adopted and managed by Flux or Flux
 Operator, such as node pools or other scheduling prerequisites (e.g. when you
 need a Karpenter `NodePool` dedicated for Flux).
@@ -123,8 +123,8 @@ module "flux_operator_bootstrap" {
     token                  = data.aws_eks_cluster_auth.this.token
   }
 
-  prerequisites_yaml = [
-    file("${path.root}/clusters/staging/flux-system/eks-nodepools.yaml"),
+  prerequisites_paths = [
+    "${path.root}/clusters/staging/flux-system/eks-nodepools.yaml",
   ]
 
   secrets_yaml = <<YAML
@@ -137,7 +137,7 @@ stringData:
   .dockerconfigjson: '${replace(local.ghcr_auth_dockerconfigjson, "'", "''")}'
 YAML
 
-  flux_instance_yaml = file("${path.root}/clusters/staging/flux-system/flux-instance.yaml")
+  flux_instance_path = "${path.root}/clusters/staging/flux-system/flux-instance.yaml"
 }
 ```
 
@@ -158,15 +158,15 @@ module "flux_operator_bootstrap" {
   use_kubectl_watcher = false
   ttl_after_finished  = "10m"
 
-  prerequisites_yaml = [
-    file("${path.root}/clusters/staging/flux-system/eks-nodepools.yaml"),
+  prerequisites_paths = [
+    "${path.root}/clusters/staging/flux-system/eks-nodepools.yaml",
   ]
 
-  flux_instance_yaml = file("${path.root}/clusters/staging/flux-system/flux-instance.yaml")
+  flux_instance_path = "${path.root}/clusters/staging/flux-system/flux-instance.yaml"
 }
 ```
 
-If your Terraform root module lives below the Git repo root, anchor `file()`
+If your Terraform root module lives below the Git repo root, anchor manifest
 paths from `path.root`, for example:
 
 ```text
@@ -177,23 +177,23 @@ repo/
 ```
 
 ```hcl
-flux_instance_yaml = file("${path.root}/../clusters/staging/flux-system/flux-instance.yaml")
+flux_instance_path = "${path.root}/../clusters/staging/flux-system/flux-instance.yaml"
 ```
 
 ## Inputs
 
-- `flux_instance_yaml` (`Required`): FluxInstance manifest YAML text
-- `prerequisites_yaml` (`Default: []`): ordered list of manifest YAML strings to apply with create-if-missing semantics before the target namespace is created
-- `secrets_yaml` (`Default: ""`): multi-document Secret manifest YAML reconciled into the target namespace with server-side apply; all documents must be `Secret` objects and their namespace must be omitted or equal the FluxInstance namespace
+- `flux_instance_path` (`Required`): absolute path to the FluxInstance manifest file; the module loads this file with `file()`
+- `prerequisites_paths` (`Default: []`): ordered list of absolute paths to prerequisite manifest files; the module loads each file with `file()` and applies them with create-if-missing semantics before the target namespace is created
+- `secrets_yaml` (`Default: ""`): optional multi-document Secret manifest YAML reconciled into the target namespace with server-side apply; all documents must be `Secret` objects and their namespace must be omitted or equal the FluxInstance namespace
 - `use_kubectl_watcher` (`Default: true`): when `wait` is true, use the host-side `kubectl` watcher instead of provider-side Job waiting
 - `kubernetes.host` (`Conditionally required`): Kubernetes API server host for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true
 - `kubernetes.cluster_ca_certificate` (`Conditionally required`): PEM-encoded cluster CA certificate for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true
 - `kubernetes.token` (`Conditionally required`): bearer token for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true
-- `bootstrap_namespace` (`Default: "flux-operator-bootstrap"`): namespace for Terraform-managed bootstrap resources
-- `image_tag` (`Required`): bootstrap job image tag; this should match the module version with a leading `v`
+- `bootstrap_namespace` (`Default: "flux-operator-bootstrap"`): namespace where the Terraform-managed bootstrap transport resources are created
+- `image_tag` (`Required`): bootstrap job container image tag; keep this aligned with the module version and include the leading `v`
 - `wait` (`Default: true`): master switch for waiting; enables `flux-operator wait instance` in the Job and Terraform-side waiting via the watcher or provider
-- `timeout` (`Default: "5m"`): global bootstrap wait timeout used by the script, watcher, and provider-side Job waiting
+- `timeout` (`Default: "5m"`): shared timeout for FluxInstance readiness waiting and Terraform Job resource timeouts
 - `ttl_after_finished` (`Default: "5m"`): TTL for finished bootstrap Jobs whenever the host-side watcher will not delete the Job
-- `debug_fault_injection_message` (`Default: ""`): testing-only fault injection that forces the job to fail after printing the supplied message
+- `debug_fault_injection_message` (`Default: ""`): testing-only fault injection that forces the Job to fail after printing the supplied message
 
 **Note**: No sensitive inputs are stored in Terraform state.

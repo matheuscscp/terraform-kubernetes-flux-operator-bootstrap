@@ -159,6 +159,10 @@ render_root_module() {
   wait="$6"
   secrets_mode="$7"
   watcher_inputs=""
+  fixtures_dir="${tf_dir}-fixtures"
+  fixture_root_name="$(basename "${fixtures_dir}")"
+  prerequisites_dir="${fixtures_dir}/tenants"
+  flux_instance_dir="${fixtures_dir}/clusters/test/flux-system"
 
   if [ "${use_kubectl_watcher}" = "true" ] && [ "${wait}" = "true" ]; then
     watcher_inputs=$(cat <<EOF
@@ -205,6 +209,39 @@ YAML
     fi
   )"
 
+  mkdir -p "${prerequisites_dir}" "${flux_instance_dir}"
+
+  cat > "${prerequisites_dir}/00-namespace.yaml" <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bootstrap-prereq
+EOF
+
+  cat > "${prerequisites_dir}/01-configmap.yaml" <<'EOF'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bootstrap-prereq
+  namespace: bootstrap-prereq
+data:
+  value: initial
+EOF
+
+  cat > "${flux_instance_dir}/flux-instance.yaml" <<'EOF'
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata:
+  name: flux
+  namespace: flux-system
+spec:
+  components:
+  - source-controller
+  distribution:
+    version: 2.x
+    registry: ghcr.io/fluxcd
+EOF
+
   cat > "${tf_dir}/main.tf" <<EOF
 terraform {
   required_version = ">= 1.7.0"
@@ -235,42 +272,16 @@ ${watcher_inputs}
 
   debug_fault_injection_message = "${fault_injection_message}"
 
-  prerequisites_yaml = [
-    <<YAML
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: bootstrap-prereq
-YAML
-    ,
-    <<YAML
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: bootstrap-prereq
-  namespace: bootstrap-prereq
-data:
-  value: initial
-YAML
+  prerequisites_paths = [
+    abspath("\${path.root}/../${fixture_root_name}/tenants/00-namespace.yaml"),
+    abspath("\${path.root}/../${fixture_root_name}/tenants/01-configmap.yaml"),
   ]
 
   secrets_yaml = <<YAML
 ${managed_secrets_yaml}
 YAML
 
-  flux_instance_yaml = <<YAML
-apiVersion: fluxcd.controlplane.io/v1
-kind: FluxInstance
-metadata:
-  name: flux
-  namespace: flux-system
-spec:
-  components:
-  - source-controller
-  distribution:
-    version: 2.x
-    registry: ghcr.io/fluxcd
-YAML
+  flux_instance_path = abspath("\${path.root}/../${fixture_root_name}/clusters/test/flux-system/flux-instance.yaml")
 }
 EOF
 }

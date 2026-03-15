@@ -1,29 +1,39 @@
-variable "flux_instance_yaml" {
-  description = "The FluxInstance manifest YAML to bootstrap."
+variable "flux_instance_path" {
+  description = "Absolute path to the FluxInstance manifest file. The module loads this file with file() and bootstraps exactly that manifest."
   type        = string
   nullable    = false
 
   validation {
     condition = (
-      can(yamldecode(var.flux_instance_yaml)) &&
-      try(yamldecode(var.flux_instance_yaml).apiVersion, "") == "fluxcd.controlplane.io/v1" &&
-      try(yamldecode(var.flux_instance_yaml).kind, "") == "FluxInstance" &&
-      try(length(yamldecode(var.flux_instance_yaml).metadata.name) > 0, false) &&
-      try(length(yamldecode(var.flux_instance_yaml).metadata.namespace) > 0, false)
+      var.flux_instance_path == abspath(var.flux_instance_path) &&
+      can(file(var.flux_instance_path)) &&
+      can(yamldecode(file(var.flux_instance_path))) &&
+      try(yamldecode(file(var.flux_instance_path)).apiVersion, "") == "fluxcd.controlplane.io/v1" &&
+      try(yamldecode(file(var.flux_instance_path)).kind, "") == "FluxInstance" &&
+      try(length(yamldecode(file(var.flux_instance_path)).metadata.name) > 0, false) &&
+      try(length(yamldecode(file(var.flux_instance_path)).metadata.namespace) > 0, false)
     )
-    error_message = "flux_instance_yaml must be a FluxInstance manifest with metadata.name and metadata.namespace."
+    error_message = "flux_instance_path must be an absolute path to a readable FluxInstance manifest file with metadata.name and metadata.namespace."
   }
 }
 
-variable "prerequisites_yaml" {
-  description = "Ordered prerequisite manifest YAMLs to apply with create-if-missing semantics before the target namespace is created."
+variable "prerequisites_paths" {
+  description = "Ordered list of absolute paths to prerequisite manifest files. Each file is loaded with file() and applied with create-if-missing semantics before the target namespace is created."
   type        = list(string)
   default     = []
   nullable    = false
+
+  validation {
+    condition = alltrue([
+      for path in var.prerequisites_paths :
+      path == abspath(path) && can(file(path))
+    ])
+    error_message = "prerequisites_paths must contain only absolute paths to readable manifest files."
+  }
 }
 
 variable "secrets_yaml" {
-  description = "Multi-document Secret manifest YAML to reconcile into the Flux target namespace with server-side apply semantics. Each document must be a Secret, and its namespace must be omitted or match the FluxInstance namespace."
+  description = "Optional multi-document Secret manifest YAML to reconcile into the Flux target namespace with server-side apply semantics. Each document must be a Secret, and its namespace must be omitted or match the FluxInstance namespace."
   type        = string
   default     = ""
   sensitive   = true
@@ -31,13 +41,13 @@ variable "secrets_yaml" {
 }
 
 variable "use_kubectl_watcher" {
-  description = "Whether to use the host-side kubectl watcher when wait is true, instead of relying on the Terraform Kubernetes provider to wait for Job completion."
+  description = "When wait is true, use the host-side kubectl watcher instead of relying on the Terraform Kubernetes provider to wait for Job completion."
   type        = bool
   default     = true
 }
 
 variable "kubernetes" {
-  description = "Kubernetes API access used by the host-side watcher when wait and use_kubectl_watcher are true."
+  description = "Kubernetes API access for the optional host-side kubectl watcher. This is only used when wait and use_kubectl_watcher are both true."
   type = object({
     host                   = optional(string)
     cluster_ca_certificate = optional(string)
@@ -60,26 +70,26 @@ variable "kubernetes" {
 }
 
 variable "bootstrap_namespace" {
-  description = "Namespace where the Terraform-managed bootstrap resources are created."
+  description = "Namespace where the Terraform-managed bootstrap transport resources are created."
   type        = string
   default     = "flux-operator-bootstrap"
   nullable    = false
 }
 
 variable "image_tag" {
-  description = "Bootstrap job container image tag. This should match the module version with a leading v, for example module version 0.0.2 with image_tag = v0.0.2."
+  description = "Bootstrap job container image tag. Keep this aligned with the module version and include the leading v, for example v0.0.2."
   type        = string
   nullable    = false
 }
 
 variable "wait" {
-  description = "Whether Terraform should wait for bootstrap completion. When true, the bootstrap script waits for a newly-created FluxInstance to become ready and Terraform waits via the kubectl watcher or provider-side Job waiting."
+  description = "Whether Terraform should wait for bootstrap completion. When true, the bootstrap Job waits for a newly-created FluxInstance to become ready and Terraform waits via the kubectl watcher or provider-side Job waiting."
   type        = bool
   default     = true
 }
 
 variable "timeout" {
-  description = "Timeout passed to 'flux-operator wait instance' and the Terraform job resource timeouts."
+  description = "Shared timeout for FluxInstance readiness waiting and the Terraform Job resource timeouts."
   type        = string
   default     = "5m"
 }
@@ -96,7 +106,7 @@ variable "ttl_after_finished" {
 }
 
 variable "debug_fault_injection_message" {
-  description = "Testing-only fault injection message. When non-empty, the bootstrap job prints it and exits non-zero."
+  description = "Testing-only fault injection message. When non-empty, the bootstrap Job prints it and exits non-zero."
   type        = string
   default     = ""
   nullable    = false

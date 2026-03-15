@@ -1,5 +1,6 @@
 locals {
-  flux_instance         = yamldecode(var.flux_instance_yaml)
+  flux_instance_yaml    = file(var.flux_instance_path)
+  flux_instance         = yamldecode(local.flux_instance_yaml)
   bootstrap_namespace   = var.bootstrap_namespace
   config_map_name       = "flux-operator-bootstrap"
   secrets_secret_name   = "flux-operator-bootstrap"
@@ -10,7 +11,7 @@ locals {
   image                 = "ghcr.io/matheuscscp/terraform-kubernetes-flux-operator-bootstrap:${var.image_tag}"
   has_secrets_yaml      = trimspace(var.secrets_yaml) != ""
   secrets_yaml_revision = local.has_secrets_yaml ? parseint(substr(sha256(var.secrets_yaml), 0, 8), 16) : 0
-  prerequisite_files    = { for idx, yaml in var.prerequisites_yaml : format("prerequisite-%03d.yaml", idx) => yaml }
+  prerequisite_files    = { for idx, path in var.prerequisites_paths : format("prerequisite-%03d.yaml", idx) => file(path) }
   ttl_value             = tonumber(trimsuffix(trimsuffix(trimsuffix(var.ttl_after_finished, "s"), "m"), "h"))
   ttl_unit              = substr(var.ttl_after_finished, length(var.ttl_after_finished) - 1, 1)
   ttl_after_finished_seconds = local.ttl_unit == "s" ? local.ttl_value : (
@@ -61,7 +62,7 @@ resource "kubernetes_config_map_v1" "this" {
 
   data = merge(
     {
-      "flux-instance.yaml" = var.flux_instance_yaml
+      "flux-instance.yaml" = local.flux_instance_yaml
     },
     local.prerequisite_files,
   )

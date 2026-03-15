@@ -59,6 +59,10 @@ get_first_pod() {
   kubectl -n "${job_namespace}" get pods -l "job-name=${job_name}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true
 }
 
+delete_job() {
+  kubectl -n "${job_namespace}" delete job "${job_name}" --ignore-not-found=true --wait=true >/dev/null 2>&1 || true
+}
+
 print_logs() {
   pod_name="$(get_first_pod)"
   if [ -n "${pod_name}" ]; then
@@ -85,12 +89,13 @@ while [ "$(date +%s)" -lt "${deadline}" ]; do
   failed="$(kubectl -n "${job_namespace}" get job "${job_name}" -o jsonpath='{.status.failed}' 2>/dev/null || true)"
 
   if [ "${succeeded:-0}" = "1" ]; then
-    kubectl -n "${job_namespace}" delete job "${job_name}" --ignore-not-found=true --wait=true
+    delete_job
     exit 0
   fi
 
   if [ -n "${failed}" ] && [ "${failed}" != "0" ]; then
     print_logs
+    delete_job
     exit 1
   fi
 
@@ -99,4 +104,5 @@ done
 
 echo "Timed out waiting for bootstrap job ${job_namespace}/${job_name} to complete" >&2
 print_logs
+delete_job
 exit 1

@@ -442,5 +442,21 @@ fi
 grep -F "Fault injection triggered: intentional e2e fault injection" "${failure_apply_log}" >/dev/null
 grep -F "=== bootstrap job failed ===" "${failure_apply_log}" >/dev/null
 
+note "Verifying failed watched Job was deleted after logs were captured"
+if kubectl --context "kind-${cluster_name}" -n flux-operator-bootstrap-failure get job flux-operator-bootstrap >/dev/null 2>&1; then
+  echo "Failed watched bootstrap Job still exists after failure log capture" >&2
+  exit 1
+fi
+
+note "Re-rendering failure scenario without fault injection to verify the watched Job is recreated"
+render_root_module "${failure_tf_dir}" "flux-operator-bootstrap-failure" "" "true" "5m" "true" "one"
+terraform -chdir="${failure_tf_dir}" apply -no-color -auto-approve
+assert_flux_runtime_ready
+assert_no_secret_material_in_state "${failure_tf_dir}"
+if kubectl --context "kind-${cluster_name}" -n flux-operator-bootstrap-failure get job flux-operator-bootstrap >/dev/null 2>&1; then
+  echo "Recovered watched bootstrap Job still exists after successful rerun" >&2
+  exit 1
+fi
+
 section "Assertions"
-note "Verified prerequisites, managed secret reconciliation, Flux readiness, idempotent rerun, destroy behavior, provider-wait mode, no-wait mode, and failure log wiring"
+note "Verified prerequisites, managed secret reconciliation, Flux readiness, idempotent rerun, destroy behavior, provider-wait mode, no-wait mode, failure log wiring, and watched Job recreation after failure"

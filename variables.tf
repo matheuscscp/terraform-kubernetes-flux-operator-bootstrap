@@ -1,24 +1,23 @@
 variable "flux_instance_path" {
-  description = "Absolute path to the FluxInstance manifest file. The module loads this file with file() and bootstraps exactly that manifest."
+  description = "Path to the FluxInstance manifest file. The module normalizes this path with abspath(), loads the file with file(), and bootstraps exactly that manifest."
   type        = string
   nullable    = false
 
   validation {
     condition = (
-      var.flux_instance_path == abspath(var.flux_instance_path) &&
-      can(file(var.flux_instance_path)) &&
-      can(yamldecode(file(var.flux_instance_path))) &&
-      try(yamldecode(file(var.flux_instance_path)).apiVersion, "") == "fluxcd.controlplane.io/v1" &&
-      try(yamldecode(file(var.flux_instance_path)).kind, "") == "FluxInstance" &&
-      try(length(yamldecode(file(var.flux_instance_path)).metadata.name) > 0, false) &&
-      try(length(yamldecode(file(var.flux_instance_path)).metadata.namespace) > 0, false)
+      can(file(abspath(var.flux_instance_path))) &&
+      can(yamldecode(file(abspath(var.flux_instance_path)))) &&
+      try(yamldecode(file(abspath(var.flux_instance_path))).apiVersion, "") == "fluxcd.controlplane.io/v1" &&
+      try(yamldecode(file(abspath(var.flux_instance_path))).kind, "") == "FluxInstance" &&
+      try(length(yamldecode(file(abspath(var.flux_instance_path))).metadata.name) > 0, false) &&
+      try(length(yamldecode(file(abspath(var.flux_instance_path))).metadata.namespace) > 0, false)
     )
-    error_message = "flux_instance_path must be an absolute path to a readable FluxInstance manifest file with metadata.name and metadata.namespace."
+    error_message = "flux_instance_path must point to a readable FluxInstance manifest file with metadata.name and metadata.namespace."
   }
 }
 
 variable "prerequisites_paths" {
-  description = "Ordered list of absolute paths to prerequisite manifest files. Each file is loaded with file() and applied with create-if-missing semantics before the target namespace is created."
+  description = "Ordered list of paths to prerequisite manifest files. Each path is normalized with abspath(), the file is loaded with file(), and the manifests are applied with create-if-missing semantics before the target namespace is created."
   type        = list(string)
   default     = []
   nullable    = false
@@ -26,9 +25,9 @@ variable "prerequisites_paths" {
   validation {
     condition = alltrue([
       for path in var.prerequisites_paths :
-      path == abspath(path) && can(file(path))
+      can(file(abspath(path)))
     ])
-    error_message = "prerequisites_paths must contain only absolute paths to readable manifest files."
+    error_message = "prerequisites_paths must contain only readable manifest files."
   }
 }
 

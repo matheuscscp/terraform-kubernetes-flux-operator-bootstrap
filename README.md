@@ -182,8 +182,8 @@ flux_instance_path = "${path.root}/../clusters/staging/flux-system/flux-instance
 
 ## Inputs
 
-- `flux_instance_path` (`Required`): absolute path to the FluxInstance manifest file; the module loads this file with `file()`
-- `prerequisites_paths` (`Default: []`): ordered list of absolute paths to prerequisite manifest files; the module loads each file with `file()` and applies them with create-if-missing semantics before the target namespace is created
+- `flux_instance_path` (`Required`): path to the FluxInstance manifest file; the module normalizes this path with `abspath()` and loads the file with `file()`
+- `prerequisites_paths` (`Default: []`): ordered list of paths to prerequisite manifest files; the module normalizes each path with `abspath()` and loads each file with `file()` before applying it with create-if-missing semantics
 - `secrets_yaml` (`Default: ""`): optional multi-document Secret manifest YAML reconciled into the target namespace with server-side apply; all documents must be `Secret` objects and their namespace must be omitted or equal the FluxInstance namespace
 - `use_kubectl_watcher` (`Default: true`): when `wait` is true, use the host-side `kubectl` watcher instead of provider-side Job waiting
 - `kubernetes.host` (`Conditionally required`): Kubernetes API server host for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true

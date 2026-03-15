@@ -273,15 +273,15 @@ ${watcher_inputs}
   debug_fault_injection_message = "${fault_injection_message}"
 
   prerequisites_paths = [
-    abspath("\${path.root}/../${fixture_root_name}/tenants/00-namespace.yaml"),
-    abspath("\${path.root}/../${fixture_root_name}/tenants/01-configmap.yaml"),
+    "\${path.root}/../${fixture_root_name}/tenants/00-namespace.yaml",
+    "\${path.root}/../${fixture_root_name}/tenants/01-configmap.yaml",
   ]
 
   secrets_yaml = <<YAML
 ${managed_secrets_yaml}
 YAML
 
-  flux_instance_path = abspath("\${path.root}/../${fixture_root_name}/clusters/test/flux-system/flux-instance.yaml")
+  flux_instance_path = "\${path.root}/../${fixture_root_name}/clusters/test/flux-system/flux-instance.yaml"
 }
 EOF
 }

@@ -1,5 +1,5 @@
 locals {
-  flux_instance_yaml    = file(var.flux_instance_path)
+  flux_instance_yaml    = file(abspath(var.flux_instance_path))
   flux_instance         = yamldecode(local.flux_instance_yaml)
   bootstrap_namespace   = var.bootstrap_namespace
   config_map_name       = "flux-operator-bootstrap"
@@ -11,7 +11,7 @@ locals {
   image                 = "${var.image_repository}:${var.image_tag}"
   has_secrets_yaml      = trimspace(var.secrets_yaml) != ""
   secrets_yaml_revision = local.has_secrets_yaml ? parseint(substr(sha256(var.secrets_yaml), 0, 8), 16) : 0
-  prerequisite_files    = { for idx, path in var.prerequisites_paths : format("prerequisite-%03d.yaml", idx) => file(path) }
+  prerequisite_files    = { for idx, path in var.prerequisites_paths : format("prerequisite-%03d.yaml", idx) => file(abspath(path)) }
   ttl_value             = tonumber(trimsuffix(trimsuffix(trimsuffix(var.ttl_after_finished, "s"), "m"), "h"))
   ttl_unit              = substr(var.ttl_after_finished, length(var.ttl_after_finished) - 1, 1)
   ttl_after_finished_seconds = local.ttl_unit == "s" ? local.ttl_value : (

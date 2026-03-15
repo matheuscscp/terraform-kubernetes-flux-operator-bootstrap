@@ -91,6 +91,18 @@ TTL cleanup starts only after the Job reaches a terminal state (`Complete` or
 With the default host-side `kubectl` watcher:
 
 ```hcl
+locals {
+  ghcr_auth_dockerconfigjson = jsonencode({
+    auths = {
+      "ghcr.io" = {
+        username = "flux"
+        password = var.ghcr_token
+        auth     = base64encode("flux:${var.ghcr_token}")
+      }
+    }
+  })
+}
+
 provider "kubernetes" {
   host                   = data.aws_eks_cluster.this.endpoint
   cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
@@ -120,15 +132,7 @@ metadata:
   name: ghcr-auth
 type: kubernetes.io/dockerconfigjson
 stringData:
-  .dockerconfigjson: ${jsonencode({
-    auths = {
-      "ghcr.io" = {
-        username = "flux"
-        password = var.ghcr_token
-        auth     = base64encode("flux:${var.ghcr_token}")
-      }
-    }
-  })}
+  .dockerconfigjson: '${replace(local.ghcr_auth_dockerconfigjson, "'", "''")}'
 YAML
 
   flux_instance_yaml = file("${path.root}/clusters/staging/flux-system/flux-instance.yaml")
@@ -150,7 +154,7 @@ module "flux_operator_bootstrap" {
   image_tag = "v0.0.2" # Keep image_tag aligned with the module version.
 
   use_kubectl_watcher = false
-  ttl_after_finished  = "5m"
+  ttl_after_finished  = "10m"
 
   prerequisites_yaml = [
     file("${path.root}/clusters/staging/flux-system/eks-nodepools.yaml"),
@@ -163,18 +167,18 @@ module "flux_operator_bootstrap" {
 
 ## Inputs
 
-- `flux_instance_yaml`: FluxInstance manifest YAML text
-- `prerequisites_yaml`: ordered list of manifest YAML strings to apply with create-if-missing semantics before the target namespace is created
-- `secrets_yaml`: multi-document Secret manifest YAML reconciled into the target namespace with server-side apply; all documents must be `Secret` objects and their namespace must be omitted or equal the FluxInstance namespace
-- `use_kubectl_watcher`: when `wait` is true, use the host-side `kubectl` watcher instead of provider-side Job waiting
-- `kubernetes.host`: Kubernetes API server host for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true
-- `kubernetes.cluster_ca_certificate`: PEM-encoded cluster CA certificate for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true
-- `kubernetes.token`: bearer token for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true
-- `bootstrap_namespace`: namespace for Terraform-managed bootstrap resources
-- `image_tag`: bootstrap job image tag; this should match the module version with a leading `v`
-- `wait`: master switch for waiting; enables `flux-operator wait instance` in the Job and Terraform-side waiting via the watcher or provider
-- `timeout`: global bootstrap wait timeout used by the script, watcher, and provider-side Job waiting
-- `ttl_after_finished`: TTL for finished bootstrap Jobs whenever the host-side watcher will not delete the Job
-- `debug_fault_injection_message`: testing-only fault injection that forces the job to fail after printing the supplied message
+- `flux_instance_yaml` (`Required`): FluxInstance manifest YAML text
+- `prerequisites_yaml` (`Default: []`): ordered list of manifest YAML strings to apply with create-if-missing semantics before the target namespace is created
+- `secrets_yaml` (`Default: ""`): multi-document Secret manifest YAML reconciled into the target namespace with server-side apply; all documents must be `Secret` objects and their namespace must be omitted or equal the FluxInstance namespace
+- `use_kubectl_watcher` (`Default: true`): when `wait` is true, use the host-side `kubectl` watcher instead of provider-side Job waiting
+- `kubernetes.host` (`Conditionally required`): Kubernetes API server host for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true
+- `kubernetes.cluster_ca_certificate` (`Conditionally required`): PEM-encoded cluster CA certificate for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true
+- `kubernetes.token` (`Conditionally required`): bearer token for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true
+- `bootstrap_namespace` (`Default: "flux-operator-bootstrap"`): namespace for Terraform-managed bootstrap resources
+- `image_tag` (`Required`): bootstrap job image tag; this should match the module version with a leading `v`
+- `wait` (`Default: true`): master switch for waiting; enables `flux-operator wait instance` in the Job and Terraform-side waiting via the watcher or provider
+- `timeout` (`Default: "5m"`): global bootstrap wait timeout used by the script, watcher, and provider-side Job waiting
+- `ttl_after_finished` (`Default: "5m"`): TTL for finished bootstrap Jobs whenever the host-side watcher will not delete the Job
+- `debug_fault_injection_message` (`Default: ""`): testing-only fault injection that forces the job to fail after printing the supplied message
 
 **Note**: No sensitive inputs are stored in Terraform state.

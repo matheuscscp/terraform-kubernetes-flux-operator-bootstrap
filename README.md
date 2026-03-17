@@ -69,6 +69,10 @@ still configure the HashiCorp Kubernetes provider for the module itself,
 because the module creates Kubernetes resources such as the bootstrap
 namespace, ConfigMap, and Job through that provider.
 
+The watcher accepts either:
+- a static bearer `token`
+- or an `exec` block shaped like the Kubernetes provider `exec` auth block
+
 When `wait = true` and `use_kubectl_watcher = true` (the default), the machine
 running Terraform must have `kubectl` and `bash` available in `PATH`. In this
 mode the module uses a `null_resource` to watch the bootstrap Job, wire pod
@@ -120,7 +124,16 @@ module "flux_operator_bootstrap" {
   kubernetes = {
     host                   = data.aws_eks_cluster.this.endpoint
     cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
-    token                  = data.aws_eks_cluster_auth.this.token
+    exec = {
+      api_version = "client.authentication.k8s.io/v1beta1"
+      command     = "aws"
+      args = [
+        "eks",
+        "get-token",
+        "--region", var.region,
+        "--cluster-name", data.aws_eks_cluster.this.name,
+      ]
+    }
   }
 
   prerequisites_paths = [
@@ -188,7 +201,12 @@ flux_instance_path = "${path.root}/../clusters/staging/flux-system/flux-instance
 - `use_kubectl_watcher` (`Default: true`): when `wait` is true, use the host-side `kubectl` watcher instead of provider-side Job waiting
 - `kubernetes.host` (`Conditionally required`): Kubernetes API server host for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true
 - `kubernetes.cluster_ca_certificate` (`Conditionally required`): PEM-encoded cluster CA certificate for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true
-- `kubernetes.token` (`Conditionally required`): bearer token for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true
+- `kubernetes.token` (`Conditionally required`): bearer token for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true, unless `kubernetes.exec` is used instead
+- `kubernetes.exec` (`Conditionally required`): exec auth configuration for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true and no static token is provided
+- `kubernetes.exec.api_version` (`Required with kubernetes.exec`): exec credential plugin API version
+- `kubernetes.exec.command` (`Required with kubernetes.exec`): exec credential plugin command
+- `kubernetes.exec.args` (`Default: []`): exec credential plugin command arguments
+- `kubernetes.exec.env` (`Default: []`): exec credential plugin environment variables
 - `bootstrap_namespace` (`Default: "flux-operator-bootstrap"`): namespace where the Terraform-managed bootstrap transport resources are created
 - `image_repository` (`Default: "ghcr.io/matheuscscp/terraform-kubernetes-flux-operator-bootstrap"`): bootstrap job container image repository; override this for mirrored or air-gapped environments
 - `image_tag` (`Required`): bootstrap job container image tag; keep this aligned with the module version and include the leading `v`

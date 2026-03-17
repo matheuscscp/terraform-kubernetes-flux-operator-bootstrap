@@ -51,6 +51,15 @@ variable "kubernetes" {
     host                   = optional(string)
     cluster_ca_certificate = optional(string)
     token                  = optional(string)
+    exec = optional(object({
+      api_version = string
+      command     = string
+      args        = optional(list(string), [])
+      env = optional(list(object({
+        name  = string
+        value = string
+      })), [])
+    }))
   })
   sensitive = true
   default   = {}
@@ -61,10 +70,17 @@ variable "kubernetes" {
       !(var.wait && var.use_kubectl_watcher) || (
         try(var.kubernetes.host, null) != null &&
         try(var.kubernetes.cluster_ca_certificate, null) != null &&
-        try(var.kubernetes.token, null) != null
+        (
+          try(var.kubernetes.token, null) != null ||
+          (
+            try(var.kubernetes.exec, null) != null &&
+            try(length(var.kubernetes.exec.api_version) > 0, false) &&
+            try(length(var.kubernetes.exec.command) > 0, false)
+          )
+        )
       )
     )
-    error_message = "kubernetes.host, kubernetes.cluster_ca_certificate, and kubernetes.token must be set when wait and use_kubectl_watcher are true."
+    error_message = "kubernetes.host and kubernetes.cluster_ca_certificate must be set when wait and use_kubectl_watcher are true, together with either kubernetes.token or kubernetes.exec."
   }
 }
 

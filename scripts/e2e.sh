@@ -11,6 +11,7 @@ image="${image_repository}:${image_tag}"
 module_image="ghcr.io/matheuscscp/terraform-kubernetes-flux-operator-bootstrap:${image_tag}"
 success_tf_dir="$(mktemp -d)"
 provider_wait_tf_dir="$(mktemp -d)"
+exec_wait_tf_dir="$(mktemp -d)"
 no_wait_tf_dir="$(mktemp -d)"
 failure_tf_dir="$(mktemp -d)"
 failure_apply_log=""
@@ -145,7 +146,7 @@ dump_bootstrap_logs() {
 
 cleanup() {
   kind delete cluster --name "${cluster_name}" || true
-  rm -rf "${success_tf_dir}" "${provider_wait_tf_dir}" "${no_wait_tf_dir}" "${failure_tf_dir}"
+  rm -rf "${success_tf_dir}" "${provider_wait_tf_dir}" "${exec_wait_tf_dir}" "${no_wait_tf_dir}" "${failure_tf_dir}"
 }
 
 trap cleanup EXIT
@@ -158,14 +159,42 @@ render_root_module() {
   ttl_after_finished="$5"
   wait="$6"
   secrets_mode="$7"
+  watcher_auth_mode="$8"
   watcher_inputs=""
   fixtures_dir="${tf_dir}-fixtures"
   fixture_root_name="$(basename "${fixtures_dir}")"
   prerequisites_dir="${fixtures_dir}/tenants"
   flux_instance_dir="${fixtures_dir}/clusters/test/flux-system"
+  exec_plugin_path="${fixtures_dir}/watcher-exec.sh"
+
+  mkdir -p "${prerequisites_dir}" "${flux_instance_dir}"
 
   if [ "${use_kubectl_watcher}" = "true" ] && [ "${wait}" = "true" ]; then
-    watcher_inputs=$(cat <<EOF
+    if [ "${watcher_auth_mode}" = "exec" ]; then
+      cat > "${exec_plugin_path}" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf '{"apiVersion":"client.authentication.k8s.io/v1beta1","kind":"ExecCredential","status":{"token":"%s"}}\n' '${kubernetes_token}'
+EOF
+      chmod +x "${exec_plugin_path}"
+
+      watcher_inputs=$(cat <<EOF
+  kubernetes = {
+    host = "${kubernetes_host}"
+    cluster_ca_certificate = <<PEM
+${kubernetes_cluster_ca_certificate}
+PEM
+    exec = {
+      api_version = "client.authentication.k8s.io/v1beta1"
+      command     = "bash"
+      args        = ["\${path.root}/../${fixture_root_name}/watcher-exec.sh"]
+    }
+  }
+EOF
+)
+    else
+      watcher_inputs=$(cat <<EOF
   kubernetes = {
     host = "${kubernetes_host}"
     cluster_ca_certificate = <<PEM
@@ -175,6 +204,7 @@ PEM
   }
 EOF
 )
+    fi
   fi
 
   managed_secrets_yaml="$(
@@ -208,8 +238,6 @@ stringData:
 YAML
     fi
   )"
-
-  mkdir -p "${prerequisites_dir}" "${flux_instance_dir}"
 
   cat > "${prerequisites_dir}/00-namespace.yaml" <<'EOF'
 apiVersion: v1
@@ -308,7 +336,7 @@ kubernetes_token="$(kubectl --context "kind-${cluster_name}" -n watcher-auth cre
 
 section "Happy Path"
 note "Rendering success scenario Terraform root"
-render_root_module "${success_tf_dir}" "flux-operator-bootstrap" "" "true" "5m" "true" "two"
+render_root_module "${success_tf_dir}" "flux-operator-bootstrap" "" "true" "5m" "true" "two" "token"
 note "Initializing success scenario"
 terraform -chdir="${success_tf_dir}" init -no-color -backend=false
 
@@ -345,7 +373,7 @@ if ! secret_has_field_manager "e2e-drift-manager"; then
   echo "Managed Secret was not updated with the e2e drift field manager" >&2
   exit 1
 fi
-render_root_module "${success_tf_dir}" "flux-operator-bootstrap" "" "true" "5m" "true" "one"
+render_root_module "${success_tf_dir}" "flux-operator-bootstrap" "" "true" "5m" "true" "one" "token"
 
 note "Running second bootstrap apply to verify idempotent rerun"
 terraform -chdir="${success_tf_dir}" apply -no-color -auto-approve
@@ -399,7 +427,7 @@ fi
 
 section "Provider Wait Mode"
 note "Rendering provider-wait scenario Terraform root"
-render_root_module "${provider_wait_tf_dir}" "flux-operator-bootstrap-provider-wait" "" "false" "5s" "true" "one"
+render_root_module "${provider_wait_tf_dir}" "flux-operator-bootstrap-provider-wait" "" "false" "5s" "true" "one" "token"
 note "Initializing provider-wait scenario"
 terraform -chdir="${provider_wait_tf_dir}" init -no-color -backend=false
 note "Running provider-wait bootstrap apply"
@@ -418,9 +446,23 @@ if kubectl --context "kind-${cluster_name}" -n flux-operator-bootstrap-provider-
   exit 1
 fi
 
+section "Exec Watcher Mode"
+note "Rendering exec-watcher scenario Terraform root"
+render_root_module "${exec_wait_tf_dir}" "flux-operator-bootstrap-exec-wait" "" "true" "5m" "true" "one" "exec"
+note "Initializing exec-watcher scenario"
+terraform -chdir="${exec_wait_tf_dir}" init -no-color -backend=false
+note "Running exec-watcher bootstrap apply"
+terraform -chdir="${exec_wait_tf_dir}" apply -no-color -auto-approve
+note "Verifying exec-watcher state is also free of managed secret material"
+assert_no_secret_material_in_state "${exec_wait_tf_dir}"
+if kubectl --context "kind-${cluster_name}" -n flux-operator-bootstrap-exec-wait get job flux-operator-bootstrap >/dev/null 2>&1; then
+  echo "Exec-watcher bootstrap job still exists after successful watched run" >&2
+  exit 1
+fi
+
 section "No Wait Mode"
 note "Rendering no-wait scenario Terraform root"
-render_root_module "${no_wait_tf_dir}" "flux-operator-bootstrap-no-wait" "" "true" "5s" "false" "one"
+render_root_module "${no_wait_tf_dir}" "flux-operator-bootstrap-no-wait" "" "true" "5s" "false" "one" "token"
 note "Initializing no-wait scenario"
 terraform -chdir="${no_wait_tf_dir}" init -no-color -backend=false
 note "Running no-wait bootstrap apply"
@@ -445,7 +487,7 @@ fi
 
 section "Failure Path"
 note "Rendering failure scenario Terraform root"
-render_root_module "${failure_tf_dir}" "flux-operator-bootstrap-failure" "intentional e2e fault injection" "true" "5m" "true" "one"
+render_root_module "${failure_tf_dir}" "flux-operator-bootstrap-failure" "intentional e2e fault injection" "true" "5m" "true" "one" "token"
 note "Initializing failure scenario"
 terraform -chdir="${failure_tf_dir}" init -no-color -backend=false
 
@@ -472,7 +514,7 @@ if kubectl --context "kind-${cluster_name}" -n flux-operator-bootstrap-failure g
 fi
 
 note "Re-rendering failure scenario without fault injection to verify the watched Job is recreated"
-render_root_module "${failure_tf_dir}" "flux-operator-bootstrap-failure" "" "true" "5m" "true" "one"
+render_root_module "${failure_tf_dir}" "flux-operator-bootstrap-failure" "" "true" "5m" "true" "one" "token"
 terraform -chdir="${failure_tf_dir}" apply -no-color -auto-approve
 assert_flux_runtime_ready
 assert_no_secret_material_in_state "${failure_tf_dir}"
@@ -482,4 +524,4 @@ if kubectl --context "kind-${cluster_name}" -n flux-operator-bootstrap-failure g
 fi
 
 section "Assertions"
-note "Verified prerequisites, managed secret reconciliation, Flux readiness, idempotent rerun, destroy behavior, provider-wait mode, no-wait mode, failure log wiring, and watched Job recreation after failure"
+note "Verified prerequisites, managed secret reconciliation, Flux readiness, idempotent rerun, destroy behavior, provider-wait mode, exec-watcher mode, no-wait mode, failure log wiring, and watched Job recreation after failure"

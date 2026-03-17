@@ -237,6 +237,10 @@ resource "null_resource" "watch_job" {
       KUBERNETES_HOST                   = try(var.kubernetes.host, null)
       KUBERNETES_CLUSTER_CA_CERTIFICATE = try(var.kubernetes.cluster_ca_certificate, null)
       KUBERNETES_TOKEN                  = try(var.kubernetes.token, null)
+      KUBERNETES_EXEC_API_VERSION       = try(var.kubernetes.exec.api_version, null)
+      KUBERNETES_EXEC_COMMAND           = try(var.kubernetes.exec.command, null)
+      KUBERNETES_EXEC_ARGS              = try(base64encode(join("\n", var.kubernetes.exec.args)), null)
+      KUBERNETES_EXEC_ENV               = try(base64encode(join("\n", [for item in var.kubernetes.exec.env : "${item.name}=${item.value}"])), null)
     }
   }
 

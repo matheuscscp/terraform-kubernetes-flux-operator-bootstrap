@@ -1,0 +1,17 @@
+image:
+  repository: ghcr.io/matheuscscp/terraform-kubernetes-flux-operator-bootstrap
+  tag: ""
+  pullPolicy: IfNotPresent
+
+gitopsResources:
+  fluxInstance: ""
+  prerequisites: {}
+
+managedResources:
+  secretsYAML: ""
+
+timeout: "5m"
+
+debugFaultInjectionMessage: ""
+
+applyTimestamp: ""

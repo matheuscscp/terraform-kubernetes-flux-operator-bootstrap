@@ -4,12 +4,11 @@ set -eu
 flux_instance_file="${FLUX_INSTANCE_FILE:?FLUX_INSTANCE_FILE is required}"
 prerequisites_dir="${PREREQUISITES_DIR:-/bootstrap}"
 secrets_file="${SECRETS_FILE:-}"
-wait_for_instance="${WAIT_FOR_INSTANCE:-true}"
 timeout="${TIMEOUT:-5m}"
 bootstrap_namespace="${BOOTSTRAP_NAMESPACE:?BOOTSTRAP_NAMESPACE is required}"
 service_account_name="${SERVICE_ACCOUNT_NAME:?SERVICE_ACCOUNT_NAME is required}"
 cluster_role_binding_name="${CLUSTER_ROLE_BINDING_NAME:?CLUSTER_ROLE_BINDING_NAME is required}"
-inventory_secret_name="${INVENTORY_SECRET_NAME:-flux-operator-bootstrap-inventory}"
+inventory_secret_name="inventory"
 debug_fault_injection_message="${DEBUG_FAULT_INJECTION_MESSAGE:-}"
 field_manager="flux-operator-bootstrap"
 
@@ -451,7 +450,9 @@ reconcile_secrets "${scratch_dir}"
 if ! helm status flux-operator -n "${namespace}" >/dev/null 2>&1; then
   log "Install Flux Operator"
   helm install flux-operator oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator \
-    -n "${namespace}"
+    --namespace="${namespace}" \
+    --wait=watcher \
+    --timeout="${timeout}"
 else
   log "Flux Operator exists"
 fi
@@ -468,7 +469,7 @@ else
   log "FluxInstance exists"
 fi
 
-if [ "${instance_created}" = "true" ] && [ "${wait_for_instance}" = "true" ]; then
+if [ "${instance_created}" = "true" ]; then
   log "Wait for FluxInstance"
   flux-operator wait instance "${instance_name}" -n "${namespace}" --timeout="${timeout}"
 else

@@ -1,6 +1,6 @@
 # terraform-kubernetes-flux-operator-bootstrap
 
-Terraform module to bootstrap Flux Operator in a Kubernetes cluster with a Kubernetes Job.
+Terraform module to bootstrap Flux Operator in a Kubernetes cluster with a Helm chart and a Kubernetes Job.
 
 This module exists to solve the bootstrap ownership problem cleanly:
 Terraform needs to get Flux Operator and a `FluxInstance` into the cluster, but
@@ -8,10 +8,10 @@ those resources are supposed to be continuously reconciled by Flux and Flux
 Operator afterwards, not by Terraform.
 
 The module keeps Terraform ownership limited to bootstrap-only transport
-resources such as the bootstrap namespace, RBAC, mounted manifests, and the
-bootstrap Job itself. The Job then performs the one-time bootstrap actions that
-let Flux and Flux Operator take over steady-state reconciliation inside the
-cluster.
+resources deployed via a local Helm chart: the bootstrap namespace, RBAC,
+mounted manifests, and a bootstrap Job implemented as a Helm hook. The Job then
+performs the one-time bootstrap actions that let Flux and Flux Operator take
+over steady-state reconciliation inside the cluster.
 
 That split is intentional:
 
@@ -20,14 +20,14 @@ That split is intentional:
 
 ## Overview
 
-The module creates:
+The module deploys a local Helm chart via `helm_release` that creates:
 
 - a dedicated bootstrap namespace
 - a `ServiceAccount` for the bootstrap pod
 - a `ClusterRoleBinding` granting `cluster-admin` to that `ServiceAccount`
 - a `ConfigMap` containing the manifest contents loaded from `flux_instance_path` and `prerequisites_paths`
-- an optional write-only `Secret` in the bootstrap namespace containing `secrets_yaml`
-- a `Job` that (in this order):
+- an optional `Secret` in the bootstrap namespace containing `secrets_yaml` (passed via write-only Helm values, never stored in Terraform state)
+- a `Job` (Helm hook: post-install, post-upgrade) that (in this order):
   - applies manifests from `prerequisites_paths` in the provided order with create-if-missing semantics
   - creates the target namespace from the manifest loaded from `flux_instance_path` if missing
   - reconciles `secrets_yaml` into the target namespace with server-side apply
@@ -35,10 +35,10 @@ The module creates:
   - applies the manifest loaded from `flux_instance_path` with create-if-missing semantics
   - optionally waits for the instance to become ready
   - deletes its temporary `ServiceAccount` and `ClusterRoleBinding` before exiting
-- a host-side watcher that:
-  - polls the Job every 2 seconds until it succeeds or fails
-  - prints pod logs before failing Terraform if the Job fails or times out
-  - deletes the Job after a watched run so the next apply can recreate it
+
+The Helm release is upgraded on every `terraform apply`, which triggers the
+post-upgrade hook and re-runs the bootstrap Job. Helm natively waits for the
+hook Job to complete (or fail), so no external watcher is needed.
 
 `prerequisites_paths` and `secrets_yaml` exist to cover the bootstrap-time
 resources that must be present inside the cluster before Flux, while still
@@ -63,38 +63,10 @@ hard, impose chicken-and-egg problems, etc. It's recommended to keep the
 secrets managed here as simple as possible, only secrets strictly required
 for the `FluxInstance` to come up healthy.
 
-The `kubernetes` input is only used by the default (but optional) host-side
-`kubectl` watcher. Regardless of whether you use that watcher, callers must
-still configure the HashiCorp Kubernetes provider for the module itself,
-because the module creates Kubernetes resources such as the bootstrap
-namespace, ConfigMap, and Job through that provider.
-
-The watcher accepts either:
-- a static bearer `token`
-- or an `exec` block shaped like the Kubernetes provider `exec` auth block
-
-When `wait = true` and `use_kubectl_watcher = true` (the default), the machine
-running Terraform must have `kubectl` and `bash` available in `PATH`. In this
-mode the module uses a `null_resource` to watch the bootstrap Job, wire pod
-logs into Terraform failures, and delete the Job at the end (the Job is deleted
-so it can be recreated on the next apply, which allows it to run as a reconciler).
-
-When `wait = true` and `use_kubectl_watcher = false`, the module skips the
-host-side watcher and relies on the Terraform Kubernetes provider to wait for
-Job completion. In that mode the Job gets a TTL and no host `kubectl` or
-credentials are required (the HashiCorp Kubernetes provider still needs
-credentials).
-
-When `wait = false`, the module does not wait at all. The host-side watcher
-is skipped, provider-side Job waiting is disabled, and the Job gets a TTL
-for automatic cleanup.
-
-TTL cleanup starts only after the Job reaches a terminal state (`Complete` or
-`Failed`), not immediately after Terraform creates it.
+Callers must configure the HashiCorp Helm provider for the module, because
+the module deploys the bootstrap Helm chart through that provider.
 
 ## Usage
-
-With the default host-side `kubectl` watcher:
 
 ```hcl
 locals {
@@ -109,73 +81,36 @@ locals {
   })
 }
 
-provider "kubernetes" {
-  host                   = data.aws_eks_cluster.this.endpoint
-  cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
-  token                  = data.aws_eks_cluster_auth.this.token
-}
-
-module "flux_operator_bootstrap" {
-  source    = "matheuscscp/flux-operator-bootstrap/kubernetes"
-  version   = "0.0.2"
-  image_tag = "v0.0.2" # Keep image_tag aligned with the module version.
-
-  # Required for the kubectl watcher.
+provider "helm" {
   kubernetes = {
     host                   = data.aws_eks_cluster.this.endpoint
     cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
-    exec = {
-      api_version = "client.authentication.k8s.io/v1beta1"
-      command     = "aws"
-      args = [
-        "eks",
-        "get-token",
-        "--region", var.region,
-        "--cluster-name", data.aws_eks_cluster.this.name,
-      ]
-    }
+    token                  = data.aws_eks_cluster_auth.this.token
   }
-
-  prerequisites_paths = [
-    "${path.root}/clusters/staging/flux-system/eks-nodepools.yaml",
-  ]
-
-  secrets_yaml = <<YAML
-apiVersion: v1
-kind: Secret
-metadata:
-  name: ghcr-auth
-type: kubernetes.io/dockerconfigjson
-stringData:
-  .dockerconfigjson: '${replace(local.ghcr_auth_dockerconfigjson, "'", "''")}'
-YAML
-
-  flux_instance_path = "${path.root}/clusters/staging/flux-system/flux-instance.yaml"
-}
-```
-
-Without the host-side `kubectl` watcher:
-
-```hcl
-provider "kubernetes" {
-  host                   = data.aws_eks_cluster.this.endpoint
-  cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
-  token                  = data.aws_eks_cluster_auth.this.token
 }
 
 module "flux_operator_bootstrap" {
-  source    = "matheuscscp/flux-operator-bootstrap/kubernetes"
-  version   = "0.0.2"
-  image_tag = "v0.0.2" # Keep image_tag aligned with the module version.
+  source  = "matheuscscp/flux-operator-bootstrap/kubernetes"
+  version = "0.0.2"
 
-  use_kubectl_watcher = false
-  ttl_after_finished  = "10m"
+  gitops_resources = {
+    flux_instance_path = "${path.root}/clusters/staging/flux-system/flux-instance.yaml"
+    prerequisites_paths = [
+      "${path.root}/clusters/staging/flux-system/eks-nodepools.yaml",
+    ]
+  }
 
-  prerequisites_paths = [
-    "${path.root}/clusters/staging/flux-system/eks-nodepools.yaml",
-  ]
-
-  flux_instance_path = "${path.root}/clusters/staging/flux-system/flux-instance.yaml"
+  managed_resources = {
+    secrets_yaml = <<-YAML
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: ghcr-auth
+      type: kubernetes.io/dockerconfigjson
+      stringData:
+        .dockerconfigjson: '${replace(local.ghcr_auth_dockerconfigjson, "'", "''")}'
+    YAML
+  }
 }
 ```
 
@@ -190,29 +125,24 @@ repo/
 ```
 
 ```hcl
-flux_instance_path = "${path.root}/../clusters/staging/flux-system/flux-instance.yaml"
+gitops_resources = {
+  flux_instance_path = "${path.root}/../clusters/staging/flux-system/flux-instance.yaml"
+}
 ```
 
 ## Inputs
 
-- `flux_instance_path` (`Required`): path to the FluxInstance manifest file; the module normalizes this path with `abspath()` and loads the file with `file()`
-- `prerequisites_paths` (`Default: []`): ordered list of paths to prerequisite manifest files; the module normalizes each path with `abspath()` and loads each file with `file()` before applying it with create-if-missing semantics
-- `secrets_yaml` (`Default: ""`): optional multi-document Secret manifest YAML reconciled into the target namespace with server-side apply; all documents must be `Secret` objects and their namespace must be omitted or equal the FluxInstance namespace
-- `use_kubectl_watcher` (`Default: true`): when `wait` is true, use the host-side `kubectl` watcher instead of provider-side Job waiting
-- `kubernetes.host` (`Conditionally required`): Kubernetes API server host for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true
-- `kubernetes.cluster_ca_certificate` (`Conditionally required`): PEM-encoded cluster CA certificate for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true
-- `kubernetes.token` (`Conditionally required`): bearer token for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true, unless `kubernetes.exec` is used instead
-- `kubernetes.exec` (`Conditionally required`): exec auth configuration for the optional host-side watcher when `wait` and `use_kubectl_watcher` are true and no static token is provided
-- `kubernetes.exec.api_version` (`Required with kubernetes.exec`): exec credential plugin API version
-- `kubernetes.exec.command` (`Required with kubernetes.exec`): exec credential plugin command
-- `kubernetes.exec.args` (`Default: []`): exec credential plugin command arguments
-- `kubernetes.exec.env` (`Default: []`): exec credential plugin environment variables
+- `gitops_resources` (`Required`): resources that will be reconciled by Flux after bootstrap; applied with create-if-missing semantics so that Flux can take ownership for steady-state reconciliation
+  - `.flux_instance_path` (`Required`): path to the FluxInstance manifest file; the module normalizes this path with `abspath()` and loads the file with `file()`
+  - `.prerequisites_paths` (`Default: []`): ordered list of paths to prerequisite manifest files; the module normalizes each path with `abspath()` and loads each file with `file()`
+- `managed_resources` (`Default: {}`): resources that are applied and reconciled by Terraform on every apply; unlike `gitops_resources`, these remain under Terraform's ownership and will be updated to match the desired state on each run
+  - `.secrets_yaml` (`Default: ""`): optional multi-document Secret manifest YAML reconciled into the target namespace with server-side apply; all documents must be `Secret` objects and their namespace must be omitted or equal the FluxInstance namespace
 - `bootstrap_namespace` (`Default: "flux-operator-bootstrap"`): namespace where the Terraform-managed bootstrap transport resources are created
-- `image_repository` (`Default: "ghcr.io/matheuscscp/terraform-kubernetes-flux-operator-bootstrap"`): bootstrap job container image repository; override this for mirrored or air-gapped environments
-- `image_tag` (`Required`): bootstrap job container image tag; keep this aligned with the module version and include the leading `v`
-- `wait` (`Default: true`): master switch for waiting; enables `flux-operator wait instance` in the Job and Terraform-side waiting via the watcher or provider
-- `timeout` (`Default: "5m"`): shared timeout for FluxInstance readiness waiting and Terraform Job resource timeouts
-- `ttl_after_finished` (`Default: "5m"`): TTL for finished bootstrap Jobs whenever the host-side watcher will not delete the Job
+- `image` (`Default: {}`): bootstrap job container image
+  - `.repository` (`Default: "ghcr.io/matheuscscp/terraform-kubernetes-flux-operator-bootstrap"`): image repository; override for mirrored or air-gapped environments
+  - `.tag` (`Default: module version`): image tag; defaults to the module version
+  - `.pullPolicy` (`Default: "IfNotPresent"`): image pull policy
+- `timeout` (`Default: "5m"`): shared timeout for FluxInstance readiness waiting and the Helm release timeout
 - `debug_fault_injection_message` (`Default: ""`): testing-only fault injection that forces the Job to fail after printing the supplied message
 
 **Note**: No sensitive inputs are stored in Terraform state.

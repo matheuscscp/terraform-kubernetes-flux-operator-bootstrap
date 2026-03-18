@@ -1,13 +1,13 @@
+locals {
+  module_version = "v0.0.10"
+}
+
 terraform {
-  required_version = ">= 1.7.0"
+  required_version = ">= 1.11.0"
 
   required_providers {
-    kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = "~> 3.0"
-    }
-    null = {
-      source  = "hashicorp/null"
+    helm = {
+      source  = "hashicorp/helm"
       version = "~> 3.0"
     }
   }

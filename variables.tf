@@ -1,87 +1,40 @@
-variable "flux_instance_path" {
-  description = "Path to the FluxInstance manifest file. The module normalizes this path with abspath(), loads the file with file(), and bootstraps exactly that manifest."
-  type        = string
-  nullable    = false
+variable "gitops_resources" {
+  description = "Resources that will be reconciled by Flux after bootstrap. These are applied with create-if-missing semantics so that Flux can take ownership of them for steady-state reconciliation."
+  type = object({
+    flux_instance_path  = string
+    prerequisites_paths = optional(list(string), [])
+  })
+  nullable = false
 
   validation {
     condition = (
-      can(file(abspath(var.flux_instance_path))) &&
-      can(yamldecode(file(abspath(var.flux_instance_path)))) &&
-      try(yamldecode(file(abspath(var.flux_instance_path))).apiVersion, "") == "fluxcd.controlplane.io/v1" &&
-      try(yamldecode(file(abspath(var.flux_instance_path))).kind, "") == "FluxInstance" &&
-      try(length(yamldecode(file(abspath(var.flux_instance_path))).metadata.name) > 0, false) &&
-      try(length(yamldecode(file(abspath(var.flux_instance_path))).metadata.namespace) > 0, false)
+      can(file(abspath(var.gitops_resources.flux_instance_path))) &&
+      can(yamldecode(file(abspath(var.gitops_resources.flux_instance_path)))) &&
+      try(yamldecode(file(abspath(var.gitops_resources.flux_instance_path))).apiVersion, "") == "fluxcd.controlplane.io/v1" &&
+      try(yamldecode(file(abspath(var.gitops_resources.flux_instance_path))).kind, "") == "FluxInstance" &&
+      try(length(yamldecode(file(abspath(var.gitops_resources.flux_instance_path))).metadata.name) > 0, false) &&
+      try(length(yamldecode(file(abspath(var.gitops_resources.flux_instance_path))).metadata.namespace) > 0, false)
     )
-    error_message = "flux_instance_path must point to a readable FluxInstance manifest file with metadata.name and metadata.namespace."
+    error_message = "gitops_resources.flux_instance_path must point to a readable FluxInstance manifest file with metadata.name and metadata.namespace."
   }
-}
-
-variable "prerequisites_paths" {
-  description = "Ordered list of paths to prerequisite manifest files. Each path is normalized with abspath(), the file is loaded with file(), and the manifests are applied with create-if-missing semantics before the target namespace is created."
-  type        = list(string)
-  default     = []
-  nullable    = false
 
   validation {
     condition = alltrue([
-      for path in var.prerequisites_paths :
+      for path in var.gitops_resources.prerequisites_paths :
       can(file(abspath(path)))
     ])
-    error_message = "prerequisites_paths must contain only readable manifest files."
+    error_message = "gitops_resources.prerequisites_paths must contain only readable manifest files."
   }
 }
 
-variable "secrets_yaml" {
-  description = "Optional multi-document Secret manifest YAML to reconcile into the Flux target namespace with server-side apply semantics. Each document must be a Secret, and its namespace must be omitted or match the FluxInstance namespace."
-  type        = string
-  default     = ""
-  sensitive   = true
-  nullable    = false
-}
-
-variable "use_kubectl_watcher" {
-  description = "When wait is true, use the host-side kubectl watcher instead of relying on the Terraform Kubernetes provider to wait for Job completion."
-  type        = bool
-  default     = true
-}
-
-variable "kubernetes" {
-  description = "Kubernetes API access for the optional host-side kubectl watcher. This is only used when wait and use_kubectl_watcher are both true."
+variable "managed_resources" {
+  description = "Resources that are applied and reconciled by Terraform on every apply. Unlike gitops_resources, these remain under Terraform's ownership and will be updated to match the desired state on each run."
   type = object({
-    host                   = optional(string)
-    cluster_ca_certificate = optional(string)
-    token                  = optional(string)
-    exec = optional(object({
-      api_version = string
-      command     = string
-      args        = optional(list(string), [])
-      env = optional(list(object({
-        name  = string
-        value = string
-      })), [])
-    }))
+    secrets_yaml = optional(string, "")
   })
   sensitive = true
   default   = {}
   nullable  = false
-
-  validation {
-    condition = (
-      !(var.wait && var.use_kubectl_watcher) || (
-        try(var.kubernetes.host, null) != null &&
-        try(var.kubernetes.cluster_ca_certificate, null) != null &&
-        (
-          try(var.kubernetes.token, null) != null ||
-          (
-            try(var.kubernetes.exec, null) != null &&
-            try(length(var.kubernetes.exec.api_version) > 0, false) &&
-            try(length(var.kubernetes.exec.command) > 0, false)
-          )
-        )
-      )
-    )
-    error_message = "kubernetes.host and kubernetes.cluster_ca_certificate must be set when wait and use_kubectl_watcher are true, together with either kubernetes.token or kubernetes.exec."
-  }
 }
 
 variable "bootstrap_namespace" {
@@ -91,40 +44,21 @@ variable "bootstrap_namespace" {
   nullable    = false
 }
 
-variable "image_repository" {
-  description = "Bootstrap job container image repository. Override this for mirrored or air-gapped environments."
-  type        = string
-  default     = "ghcr.io/matheuscscp/terraform-kubernetes-flux-operator-bootstrap"
-  nullable    = false
-}
-
-variable "image_tag" {
-  description = "Bootstrap job container image tag. Keep this aligned with the module version and include the leading v, for example v0.0.2."
-  type        = string
-  nullable    = false
-}
-
-variable "wait" {
-  description = "Whether Terraform should wait for bootstrap completion. When true, the bootstrap Job waits for a newly-created FluxInstance to become ready and Terraform waits via the kubectl watcher or provider-side Job waiting."
-  type        = bool
-  default     = true
+variable "image" {
+  description = "Bootstrap job container image."
+  type = object({
+    repository = optional(string, "ghcr.io/matheuscscp/terraform-kubernetes-flux-operator-bootstrap")
+    tag        = optional(string)
+    pullPolicy = optional(string, "IfNotPresent")
+  })
+  default  = {}
+  nullable = false
 }
 
 variable "timeout" {
-  description = "Shared timeout for FluxInstance readiness waiting and the Terraform Job resource timeouts."
+  description = "Shared timeout for FluxInstance readiness waiting and the Helm release timeout."
   type        = string
   default     = "5m"
-}
-
-variable "ttl_after_finished" {
-  description = "TTL for finished bootstrap Jobs whenever the host-side kubectl watcher is not responsible for deleting the Job."
-  type        = string
-  default     = "5m"
-
-  validation {
-    condition     = length(regexall("^[0-9]+[smh]$", var.ttl_after_finished)) > 0
-    error_message = "ttl_after_finished must be a duration like 30s, 5m, or 1h."
-  }
 }
 
 variable "debug_fault_injection_message" {

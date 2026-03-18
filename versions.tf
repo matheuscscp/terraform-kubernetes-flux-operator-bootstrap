@@ -1,5 +1,5 @@
 locals {
-  module_version = "v0.0.12"
+  module_version = "v0.0.13"
 }
 
 terraform {

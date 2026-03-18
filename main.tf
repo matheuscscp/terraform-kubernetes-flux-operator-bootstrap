@@ -36,6 +36,7 @@ resource "helm_release" "this" {
   set_wo = local.has_secrets_yaml ? [{
     name  = "managedResources.secretsYAML"
     value = var.managed_resources.secrets_yaml
+    type  = "string"
   }] : []
   set_wo_revision = local.has_secrets_yaml ? parseint(formatdate("YYYYMMDDhhmmss", plantimestamp()), 10) : 0
 }

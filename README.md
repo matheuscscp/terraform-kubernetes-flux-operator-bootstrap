@@ -142,6 +142,5 @@ gitops_resources = {
   - `.tag` (`Default: module version`): image tag; defaults to the module version
   - `.pullPolicy` (`Default: "IfNotPresent"`): image pull policy
 - `timeout` (`Default: "5m"`): shared timeout for FluxInstance readiness waiting and the Helm release timeout
-- `debug_fault_injection_message` (`Default: ""`): testing-only fault injection that forces the Job to fail after printing the supplied message
 
-**Note**: No sensitive inputs are stored in Terraform state.
+**Note**: Secrets are not stored in the Terraform state.

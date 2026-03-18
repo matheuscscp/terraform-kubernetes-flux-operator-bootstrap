@@ -245,6 +245,10 @@ terraform {
       source  = "hashicorp/helm"
       version = ">= 3.0.0"
     }
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = ">= 3.0.0"
+    }
   }
 }
 
@@ -253,6 +257,11 @@ provider "helm" {
     config_path    = "~/.kube/config"
     config_context = "kind-${cluster_name}"
   }
+}
+
+provider "kubernetes" {
+  config_path    = "~/.kube/config"
+  config_context = "kind-${cluster_name}"
 }
 
 module "bootstrap" {

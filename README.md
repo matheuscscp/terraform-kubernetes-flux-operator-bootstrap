@@ -23,7 +23,7 @@ The module deploys a local Helm chart via `helm_release` that creates:
 - a `ServiceAccount` for the bootstrap pod
 - a `ClusterRoleBinding` granting `cluster-admin` to that `ServiceAccount`
 - a `ConfigMap` containing the FluxInstance manifest and prerequisite manifests
-- an optional `Secret` containing the managed secrets YAML (passed via write-only Helm values, never stored in Terraform state)
+- an optional write-only `Secret` containing the managed secrets YAML (managed by `kubernetes_secret_v1` with `data_wo`, never stored in Terraform state)
 - a `Job` (Helm hook: post-install, post-upgrade) that:
   - applies prerequisite manifests with create-if-missing semantics
   - creates the FluxInstance target namespace if missing
@@ -50,7 +50,8 @@ registry credentials that need to be rotated and kept up to date. Keep the
 secrets managed here minimal — only what is strictly required for the
 `FluxInstance` to come up healthy.
 
-Callers must configure the HashiCorp Helm provider for the module.
+Callers must configure the HashiCorp Helm and Kubernetes providers for the
+module.
 
 ## Usage
 
@@ -73,6 +74,12 @@ provider "helm" {
     cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
     token                  = data.aws_eks_cluster_auth.this.token
   }
+}
+
+provider "kubernetes" {
+  host                   = data.aws_eks_cluster.this.endpoint
+  cluster_ca_certificate = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
+  token                  = data.aws_eks_cluster_auth.this.token
 }
 
 module "flux_operator_bootstrap" {

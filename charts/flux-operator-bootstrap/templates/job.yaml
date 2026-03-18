@@ -32,7 +32,7 @@ spec:
           value: {{ .Release.Name }}-{{ .Release.Namespace }}
         - name: DEBUG_FAULT_INJECTION_MESSAGE
           value: {{ .Values.debugFaultInjectionMessage | quote }}
-{{- if .Values.managedResources.secretsYAML }}
+{{- if .Values.managedResources.hasSecrets }}
         - name: SECRETS_FILE
           value: /bootstrap-secrets/secrets.yaml
 {{- end }}
@@ -40,7 +40,7 @@ spec:
         - name: bootstrap-manifest
           mountPath: /bootstrap
           readOnly: true
-{{- if .Values.managedResources.secretsYAML }}
+{{- if .Values.managedResources.hasSecrets }}
         - name: bootstrap-secrets
           mountPath: /bootstrap-secrets
           readOnly: true
@@ -49,8 +49,8 @@ spec:
       - name: bootstrap-manifest
         configMap:
           name: {{ .Release.Name }}
-{{- if .Values.managedResources.secretsYAML }}
+{{- if .Values.managedResources.hasSecrets }}
       - name: bootstrap-secrets
         secret:
-          secretName: {{ .Release.Name }}
+          secretName: flux-operator-bootstrap-secrets
 {{- end }}

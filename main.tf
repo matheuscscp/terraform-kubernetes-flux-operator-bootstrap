@@ -8,13 +8,41 @@ locals {
   timeout_seconds = local.timeout_unit == "s" ? local.timeout_value : (
     local.timeout_unit == "m" ? local.timeout_value * 60 : local.timeout_value * 3600
   )
+  secrets_yaml_revision = local.has_secrets_yaml ? parseint(formatdate("YYYYMMDDhhmmss", plantimestamp()), 10) : 0
+}
+
+resource "kubernetes_namespace_v1" "this" {
+  metadata {
+    name = var.bootstrap_namespace
+  }
+}
+
+resource "kubernetes_secret_v1" "this" {
+  count = local.has_secrets_yaml ? 1 : 0
+
+  depends_on = [kubernetes_namespace_v1.this]
+
+  metadata {
+    name      = "flux-operator-bootstrap-secrets"
+    namespace = var.bootstrap_namespace
+  }
+
+  type = "Opaque"
+
+  data_wo = {
+    "secrets.yaml" = var.managed_resources.secrets_yaml
+  }
+
+  data_wo_revision = local.secrets_yaml_revision
 }
 
 resource "helm_release" "this" {
+  depends_on = [kubernetes_namespace_v1.this, kubernetes_secret_v1.this]
+
   name             = "flux-operator-bootstrap"
   namespace        = var.bootstrap_namespace
   chart            = "${path.module}/charts/flux-operator-bootstrap"
-  create_namespace = true
+  create_namespace = false
   upgrade_install  = true
   wait             = true
   timeout          = local.timeout_seconds
@@ -28,15 +56,11 @@ resource "helm_release" "this" {
       fluxInstance  = local.flux_instance_yaml
       prerequisites = local.prerequisite_files
     }
+    managedResources = {
+      hasSecrets = local.has_secrets_yaml
+    }
     timeout                    = var.timeout
     debugFaultInjectionMessage = var.debug_fault_injection_message
     applyTimestamp             = plantimestamp()
   })]
-
-  set_wo = local.has_secrets_yaml ? [{
-    name  = "managedResources.secretsYAML"
-    value = var.managed_resources.secrets_yaml
-    type  = "string"
-  }] : []
-  set_wo_revision = local.has_secrets_yaml ? parseint(formatdate("YYYYMMDDhhmmss", plantimestamp()), 10) : 0
 }

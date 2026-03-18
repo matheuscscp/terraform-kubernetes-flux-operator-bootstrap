@@ -8,7 +8,7 @@ gitopsResources:
   prerequisites: {}
 
 managedResources:
-  secretsYAML: ""
+  hasSecrets: false
 
 timeout: "5m"
 

@@ -1,19 +1,16 @@
 # terraform-kubernetes-flux-operator-bootstrap
 
-Terraform module to bootstrap Flux Operator in a Kubernetes cluster with a Helm chart and a Kubernetes Job.
+Terraform module that bootstraps Flux Operator in a Kubernetes cluster using a
+local Helm chart with a bootstrap Job.
 
-This module exists to solve the bootstrap ownership problem cleanly:
-Terraform needs to get Flux Operator and a `FluxInstance` into the cluster, but
-those resources are supposed to be continuously reconciled by Flux and Flux
-Operator afterwards, not by Terraform.
+This module solves the bootstrap ownership problem: Terraform needs to get Flux
+Operator and a `FluxInstance` into the cluster, but those resources should be
+continuously reconciled by Flux afterwards, not by Terraform.
 
-The module keeps Terraform ownership limited to bootstrap-only transport
-resources deployed via a local Helm chart: the bootstrap namespace, RBAC,
-mounted manifests, and a bootstrap Job implemented as a Helm hook. The Job then
-performs the one-time bootstrap actions that let Flux and Flux Operator take
-over steady-state reconciliation inside the cluster.
-
-That split is intentional:
+The module keeps Terraform ownership limited to ephemeral bootstrap transport
+resources: the bootstrap namespace, RBAC, mounted manifests, and a bootstrap
+Job implemented as a Helm hook. The Job performs the idempotent bootstrap
+actions that let Flux and Flux Operator take over steady-state reconciliation.
 
 - Terraform manages the bootstrap mechanism
 - Flux and Flux Operator manage the steady-state GitOps resources afterwards
@@ -25,46 +22,35 @@ The module deploys a local Helm chart via `helm_release` that creates:
 - a dedicated bootstrap namespace
 - a `ServiceAccount` for the bootstrap pod
 - a `ClusterRoleBinding` granting `cluster-admin` to that `ServiceAccount`
-- a `ConfigMap` containing the manifest contents loaded from `gitops_resources.flux_instance_path` and `gitops_resources.prerequisites_paths`
-- an optional `Secret` in the bootstrap namespace containing `managed_resources.secrets_yaml` (passed via write-only Helm values, never stored in Terraform state)
-- a `Job` (Helm hook: post-install, post-upgrade) that (in this order):
-  - applies manifests from `gitops_resources.prerequisites_paths` in the provided order with create-if-missing semantics
-  - creates the target namespace from the manifest loaded from `gitops_resources.flux_instance_path` if missing
-  - reconciles `managed_resources.secrets_yaml` into the target namespace with server-side apply
+- a `ConfigMap` containing the FluxInstance manifest and prerequisite manifests
+- an optional `Secret` containing the managed secrets YAML (passed via write-only Helm values, never stored in Terraform state)
+- a `Job` (Helm hook: post-install, post-upgrade) that:
+  - applies prerequisite manifests with create-if-missing semantics
+  - creates the FluxInstance target namespace if missing
+  - reconciles managed secrets into the target namespace with server-side apply
   - installs the `flux-operator` Helm release if missing
-  - applies the manifest loaded from `gitops_resources.flux_instance_path` with create-if-missing semantics
+  - applies the FluxInstance manifest with create-if-missing semantics
   - waits for the FluxInstance to become ready
   - deletes its temporary `ServiceAccount` and `ClusterRoleBinding` before exiting
 
-The Helm release is upgraded on every `terraform apply`, which triggers the
-post-upgrade hook and re-runs the bootstrap Job. Helm natively waits for the
-hook Job to complete (or fail), so no external watcher is needed.
+The Helm release is upgraded on every `terraform apply`, which re-runs the
+bootstrap Job. Helm waits for the hook Job to complete (or fail) before
+returning.
 
-`gitops_resources` contains resources that will be reconciled by Flux after
-bootstrap. They are applied with create-if-missing semantics so that Flux can
-take ownership for steady-state reconciliation, such as node pools or other
-scheduling prerequisites (e.g. when you need a Karpenter `NodePool` dedicated
-for Flux).
+`gitops_resources` are resources meant to be reconciled by Flux after bootstrap,
+such as the FluxInstance manifest and scheduling prerequisites (e.g. Karpenter
+`NodePool`s). These are applied with create-if-missing semantics so that Flux
+can take ownership for steady-state reconciliation.
 
-`managed_resources` contains resources that are applied and reconciled by
-Terraform on every apply. Unlike `gitops_resources`, these remain under
-Terraform's ownership and will be updated to match the desired state on each
-run. `managed_resources.secrets_yaml` is fully reconciled into the target
-namespace with server-side apply, so later Terraform applies will correct
-drift for those Secrets instead of only creating them once. This managed
-approach is intentional for bootstrap secrets, which often include credentials
-that need to be rotated and kept up to date. It's assumed that the
-source-of-truth for those Secrets is wired into Terraform variables that
-ultimately feed into `managed_resources.secrets_yaml`, and the same Secrets are
-**not applied** by Flux's kustomize-controller SOPS integration, hence they
-require reconciliation. This design choice is based on the fact that wiring
-SOPS-managed secrets into this Terraform input field could be hard, impose
-chicken-and-egg problems, etc. It's recommended to keep the secrets managed
-here as simple as possible, only secrets strictly required for the
+`managed_resources` are resources that remain under Terraform's ownership and
+are reconciled on every apply. `managed_resources.secrets_yaml` is fully
+reconciled into the target namespace with server-side apply, so Terraform
+applies will correct drift. This is intended for bootstrap secrets such as
+registry credentials that need to be rotated and kept up to date. Keep the
+secrets managed here minimal — only what is strictly required for the
 `FluxInstance` to come up healthy.
 
-Callers must configure the HashiCorp Helm provider for the module, because
-the module deploys the bootstrap Helm chart through that provider.
+Callers must configure the HashiCorp Helm provider for the module.
 
 ## Usage
 
@@ -131,16 +117,16 @@ gitops_resources = {
 
 ## Inputs
 
-- `gitops_resources` (`Required`): resources that will be reconciled by Flux after bootstrap; applied with create-if-missing semantics so that Flux can take ownership for steady-state reconciliation
-  - `.flux_instance_path` (`Required`): path to the FluxInstance manifest file; the module normalizes this path with `abspath()` and loads the file with `file()`
-  - `.prerequisites_paths` (`Default: []`): ordered list of paths to prerequisite manifest files; the module normalizes each path with `abspath()` and loads each file with `file()`
-- `managed_resources` (`Default: {}`): resources that are applied and reconciled by Terraform on every apply; unlike `gitops_resources`, these remain under Terraform's ownership and will be updated to match the desired state on each run
-  - `.secrets_yaml` (`Default: ""`): optional multi-document Secret manifest YAML reconciled into the target namespace with server-side apply; all documents must be `Secret` objects and their namespace must be omitted or equal the FluxInstance namespace
-- `bootstrap_namespace` (`Default: "flux-operator-bootstrap"`): namespace where the Terraform-managed bootstrap transport resources are created
+- `gitops_resources` (`Required`): resources applied with create-if-missing semantics, meant to be reconciled by Flux after bootstrap
+  - `.flux_instance_path` (`Required`): path to the FluxInstance manifest file; normalized with `abspath()` and loaded with `file()`
+  - `.prerequisites_paths` (`Default: []`): ordered list of paths to prerequisite manifest files; each normalized with `abspath()` and loaded with `file()`
+- `managed_resources` (`Default: {}`): resources reconciled by Terraform on every apply
+  - `.secrets_yaml` (`Default: ""`): multi-document Secret manifest YAML reconciled into the target namespace with server-side apply; all documents must be `Secret` objects and their namespace must be omitted or equal the FluxInstance namespace
+- `bootstrap_namespace` (`Default: "flux-operator-bootstrap"`): namespace for the bootstrap transport resources
 - `image` (`Default: {}`): bootstrap job container image
   - `.repository` (`Default: "ghcr.io/matheuscscp/terraform-kubernetes-flux-operator-bootstrap"`): image repository; override for mirrored or air-gapped environments
   - `.tag` (`Default: module version`): image tag; defaults to the module version
   - `.pullPolicy` (`Default: "IfNotPresent"`): image pull policy
-- `timeout` (`Default: "5m"`): shared timeout for FluxInstance readiness waiting and the Helm release timeout
+- `timeout` (`Default: "5m"`): timeout for FluxInstance readiness waiting and the Helm release
 
 **Note**: Secrets are not stored in the Terraform state.

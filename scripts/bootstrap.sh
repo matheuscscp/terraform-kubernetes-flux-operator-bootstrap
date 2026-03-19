@@ -10,7 +10,7 @@ service_account_name="${SERVICE_ACCOUNT_NAME:?SERVICE_ACCOUNT_NAME is required}"
 cluster_role_binding_name="${CLUSTER_ROLE_BINDING_NAME:?CLUSTER_ROLE_BINDING_NAME is required}"
 config_map_name="${CONFIG_MAP_NAME:?CONFIG_MAP_NAME is required}"
 secrets_secret_name="${SECRETS_SECRET_NAME:-}"
-inventory_secret_name="inventory"
+inventory_config_map_name="inventory"
 debug_fault_injection_message="${DEBUG_FAULT_INJECTION_MESSAGE:-}"
 field_manager="flux-operator-bootstrap"
 
@@ -312,66 +312,80 @@ reconcile_secret_document() {
   kubectl apply --server-side --force-conflicts --field-manager="${field_manager}" -f "${manifest_file}" -n "${namespace}" >/dev/null
 }
 
-load_inventory_secret_names() {
+load_inventory_entries() {
   output_file="$1"
 
   : > "${output_file}"
 
-  if ! kubectl get secret "${inventory_secret_name}" -n "${bootstrap_namespace}" >/dev/null 2>&1; then
+  if ! kubectl get configmap "${inventory_config_map_name}" -n "${bootstrap_namespace}" >/dev/null 2>&1; then
     return 0
   fi
 
-  encoded_names="$(kubectl get secret "${inventory_secret_name}" -n "${bootstrap_namespace}" -o go-template='{{index .data "secret-names"}}')"
-  if [ -z "${encoded_names}" ]; then
+  entries="$(kubectl get configmap "${inventory_config_map_name}" -n "${bootstrap_namespace}" -o go-template='{{index .data "entries"}}')"
+  if [ -z "${entries}" ]; then
     return 0
   fi
 
-  printf '%s' "${encoded_names}" | /busybox/busybox base64 -d > "${output_file}"
+  printf '%s\n' "${entries}" | /busybox/busybox grep '^- ' | /busybox/busybox sed 's/^- //' > "${output_file}"
 }
 
-update_inventory_secret() {
-  names_file="$1"
+update_inventory() {
+  entries_file="$1"
 
-  inventory_names="$(/busybox/busybox cat "${names_file}")"
+  yaml_list=""
+  while IFS= read -r entry || [ -n "${entry}" ]; do
+    if [ -z "${entry}" ]; then
+      continue
+    fi
+    yaml_list="${yaml_list}
+    - ${entry}"
+  done < "${entries_file}"
+
+  if [ -z "${yaml_list}" ]; then
+    yaml_list="
+    []"
+  fi
 
   kubectl apply -f - >/dev/null <<EOF
 apiVersion: v1
-kind: Secret
+kind: ConfigMap
 metadata:
-  name: ${inventory_secret_name}
+  name: ${inventory_config_map_name}
   namespace: ${bootstrap_namespace}
-type: Opaque
-stringData:
-  secret-names: |-
-$(printf '%s\n' "${inventory_names}" | /busybox/busybox sed 's/^/    /')
+data:
+  entries: |${yaml_list}
 EOF
 }
 
-garbage_collect_removed_secrets() {
-  previous_names_file="$1"
-  current_names_file="$2"
+garbage_collect_removed_entries() {
+  previous_entries_file="$1"
+  current_entries_file="$2"
 
-  while IFS= read -r previous_name || [ -n "${previous_name}" ]; do
-    if [ -z "${previous_name}" ]; then
+  while IFS= read -r previous_entry || [ -n "${previous_entry}" ]; do
+    if [ -z "${previous_entry}" ]; then
       continue
     fi
 
-    if /busybox/busybox grep -Fx "${previous_name}" "${current_names_file}" >/dev/null 2>&1; then
+    if /busybox/busybox grep -Fx "${previous_entry}" "${current_entries_file}" >/dev/null 2>&1; then
       continue
     fi
 
-    log "- delete Secret ${namespace}/${previous_name}"
-    kubectl delete secret "${previous_name}" -n "${namespace}" --ignore-not-found=true >/dev/null
-  done < "${previous_names_file}"
+    entry_kind="$(printf '%s' "${previous_entry}" | /busybox/busybox cut -d'/' -f1)"
+    entry_namespace="$(printf '%s' "${previous_entry}" | /busybox/busybox cut -d'/' -f2)"
+    entry_name="$(printf '%s' "${previous_entry}" | /busybox/busybox cut -d'/' -f3)"
+
+    log "- delete ${entry_kind} ${entry_namespace}/${entry_name}"
+    kubectl delete "${entry_kind}" "${entry_name}" -n "${entry_namespace}" --ignore-not-found=true >/dev/null
+  done < "${previous_entries_file}"
 }
 
 reconcile_secrets() {
   scratch_dir="$1"
-  previous_names_file="${scratch_dir}/previous-secret-names.txt"
-  current_names_file="${scratch_dir}/current-secret-names.txt"
+  previous_entries_file="${scratch_dir}/previous-inventory-entries.txt"
+  current_entries_file="${scratch_dir}/current-inventory-entries.txt"
 
-  load_inventory_secret_names "${previous_names_file}"
-  : > "${current_names_file}"
+  load_inventory_entries "${previous_entries_file}"
+  : > "${current_entries_file}"
 
   if [ -n "${secrets_file}" ] && [ -f "${secrets_file}" ]; then
     split_dir="${scratch_dir}/managed-secrets"
@@ -390,7 +404,7 @@ reconcile_secrets() {
         return 1
       fi
       reconcile_secret_document "${manifest_file}"
-      printf '%s\n' "${current_secret_name}" >> "${current_names_file}"
+      printf 'Secret/%s/%s\n' "${namespace}" "${current_secret_name}" >> "${current_entries_file}"
     done
 
     if [ "${found_secret}" = "false" ]; then
@@ -400,9 +414,9 @@ reconcile_secrets() {
     log "No managed secrets"
   fi
 
-  /busybox/busybox sort -u -o "${current_names_file}" "${current_names_file}"
-  garbage_collect_removed_secrets "${previous_names_file}" "${current_names_file}"
-  update_inventory_secret "${current_names_file}"
+  /busybox/busybox sort -u -o "${current_entries_file}" "${current_entries_file}"
+  garbage_collect_removed_entries "${previous_entries_file}" "${current_entries_file}"
+  update_inventory "${current_entries_file}"
 }
 
 cleanup() {

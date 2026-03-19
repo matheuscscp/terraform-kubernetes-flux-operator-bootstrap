@@ -9,7 +9,7 @@ image_repository="terraform-kubernetes-flux-operator-bootstrap"
 image_tag="dev"
 image="${image_repository}:${image_tag}"
 module_image="ghcr.io/matheuscscp/terraform-kubernetes-flux-operator-bootstrap:${image_tag}"
-inventory_secret_name="inventory"
+inventory_config_map_name="inventory"
 success_tf_dir="$(mktemp -d)"
 failure_tf_dir="$(mktemp -d)"
 failure_apply_log=""
@@ -48,11 +48,11 @@ prerequisite_configmap_value() {
     -o jsonpath='{.data.value}'
 }
 
-inventory_secret_names() {
+inventory_entries() {
   bootstrap_namespace="$1"
 
-  kubectl --context "kind-${cluster_name}" -n "${bootstrap_namespace}" get "secret/${inventory_secret_name}" \
-    -o go-template='{{index .data "secret-names"}}' | base64 --decode
+  kubectl --context "kind-${cluster_name}" -n "${bootstrap_namespace}" get "configmap/${inventory_config_map_name}" \
+    -o go-template='{{index .data "entries"}}'
 }
 
 target_secret_exists() {
@@ -315,8 +315,11 @@ assert_flux_runtime_ready
 note "Verifying ordered prerequisites and managed secrets were applied"
 assert_bootstrap_inputs_applied
 initial_managed_secret_uid="$(secret_uid bootstrap-managed)"
-if [ "$(inventory_secret_names flux-operator-bootstrap)" != "$(printf 'bootstrap-managed\nbootstrap-managed-removed')" ]; then
+expected_inventory="$(printf '%s\n' '- Secret/flux-system/bootstrap-managed' '- Secret/flux-system/bootstrap-managed-removed')"
+if [ "$(inventory_entries flux-operator-bootstrap)" != "${expected_inventory}" ]; then
   echo "Managed secret inventory was not created with the expected entries" >&2
+  echo "Expected: ${expected_inventory}" >&2
+  echo "Got: $(inventory_entries flux-operator-bootstrap)" >&2
   exit 1
 fi
 note "Verifying only the completed Job and inventory remain in the bootstrap namespace"
@@ -329,7 +332,7 @@ remaining="$(kubectl --context "kind-${cluster_name}" -n flux-operator-bootstrap
 expected="$(printf '%s\n' \
   "Job flux-operator-bootstrap" \
   "Pod flux-operator-bootstrap-" \
-  "Secret inventory" \
+  "ConfigMap inventory" \
   | sort)"
 # Pod name has a random suffix, match by prefix
 remaining_normalized="$(printf '%s\n' "${remaining}" | sed 's/^\(Pod flux-operator-bootstrap-\).*/\1/')"
@@ -392,8 +395,11 @@ if target_secret_exists "bootstrap-managed-removed"; then
   echo "Removed managed Secret was not garbage-collected by the second apply" >&2
   exit 1
 fi
-if [ "$(inventory_secret_names flux-operator-bootstrap)" != "bootstrap-managed" ]; then
+expected_inventory="- Secret/flux-system/bootstrap-managed"
+if [ "$(inventory_entries flux-operator-bootstrap)" != "${expected_inventory}" ]; then
   echo "Managed secret inventory was not updated after removing a Secret from desired state" >&2
+  echo "Expected: ${expected_inventory}" >&2
+  echo "Got: $(inventory_entries flux-operator-bootstrap)" >&2
   exit 1
 fi
 if [ "$(prerequisite_configmap_value)" != "drifted" ]; then

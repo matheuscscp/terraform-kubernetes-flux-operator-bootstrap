@@ -30,11 +30,15 @@ spec:
           value: {{ .Release.Name }}
         - name: CLUSTER_ROLE_BINDING_NAME
           value: {{ .Release.Name }}-{{ .Release.Namespace }}
+        - name: CONFIG_MAP_NAME
+          value: {{ .Release.Name }}
         - name: DEBUG_FAULT_INJECTION_MESSAGE
           value: {{ .Values.debugFaultInjectionMessage | quote }}
 {{- if .Values.managedResources.hasSecrets }}
         - name: SECRETS_FILE
           value: /bootstrap-secrets/secrets.yaml
+        - name: SECRETS_SECRET_NAME
+          value: flux-operator-bootstrap-secrets
 {{- end }}
         volumeMounts:
         - name: bootstrap-manifest

@@ -8,6 +8,8 @@ timeout="${TIMEOUT:-5m}"
 bootstrap_namespace="${BOOTSTRAP_NAMESPACE:?BOOTSTRAP_NAMESPACE is required}"
 service_account_name="${SERVICE_ACCOUNT_NAME:?SERVICE_ACCOUNT_NAME is required}"
 cluster_role_binding_name="${CLUSTER_ROLE_BINDING_NAME:?CLUSTER_ROLE_BINDING_NAME is required}"
+config_map_name="${CONFIG_MAP_NAME:?CONFIG_MAP_NAME is required}"
+secrets_secret_name="${SECRETS_SECRET_NAME:-}"
 inventory_secret_name="inventory"
 debug_fault_injection_message="${DEBUG_FAULT_INJECTION_MESSAGE:-}"
 field_manager="flux-operator-bootstrap"
@@ -404,9 +406,17 @@ reconcile_secrets() {
 }
 
 cleanup() {
-  log "Cleanup bootstrap RBAC"
+  log "Cleanup bootstrap transport resources"
   if [ -n "${scratch_dir:-}" ] && [ -d "${scratch_dir}" ]; then
     /busybox/busybox rm -rf "${scratch_dir}"
+  fi
+  if ! kubectl delete configmap "${config_map_name}" -n "${bootstrap_namespace}" --ignore-not-found=true >/dev/null; then
+    log "Failed to delete ConfigMap ${bootstrap_namespace}/${config_map_name}"
+  fi
+  if [ -n "${secrets_secret_name}" ]; then
+    if ! kubectl delete secret "${secrets_secret_name}" -n "${bootstrap_namespace}" --ignore-not-found=true >/dev/null; then
+      log "Failed to delete Secret ${bootstrap_namespace}/${secrets_secret_name}"
+    fi
   fi
   if ! kubectl delete serviceaccount "${service_account_name}" -n "${bootstrap_namespace}" --ignore-not-found=true >/dev/null; then
     log "Failed to delete ServiceAccount ${bootstrap_namespace}/${service_account_name}"

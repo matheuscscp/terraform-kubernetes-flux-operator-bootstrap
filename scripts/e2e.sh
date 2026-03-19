@@ -319,7 +319,29 @@ if [ "$(inventory_secret_names flux-operator-bootstrap)" != "$(printf 'bootstrap
   echo "Managed secret inventory was not created with the expected entries" >&2
   exit 1
 fi
-note "Verifying bootstrap ClusterRoleBinding was removed by the job"
+note "Verifying only the completed Job and inventory remain in the bootstrap namespace"
+remaining="$(kubectl --context "kind-${cluster_name}" -n flux-operator-bootstrap get all,secrets,configmaps \
+  --no-headers -o custom-columns=KIND:.kind,NAME:.metadata.name 2>/dev/null \
+  | grep -v "^Secret.*sh\.helm\.release" \
+  | grep -v "^ConfigMap.*kube-root-ca\.crt" \
+  | awk '{print $1, $2}' \
+  | sort)"
+expected="$(printf '%s\n' \
+  "Job flux-operator-bootstrap" \
+  "Pod flux-operator-bootstrap-" \
+  "Secret inventory" \
+  | sort)"
+# Pod name has a random suffix, match by prefix
+remaining_normalized="$(printf '%s\n' "${remaining}" | sed 's/^\(Pod flux-operator-bootstrap-\).*/\1/')"
+if [ "${remaining_normalized}" != "${expected}" ]; then
+  echo "Unexpected resources in bootstrap namespace after job completion:" >&2
+  echo "Expected:" >&2
+  echo "${expected}" >&2
+  echo "Got:" >&2
+  echo "${remaining}" >&2
+  exit 1
+fi
+note "Verifying bootstrap ClusterRoleBinding was removed"
 if kubectl --context "kind-${cluster_name}" get clusterrolebinding flux-operator-bootstrap-flux-operator-bootstrap >/dev/null 2>&1; then
   echo "Bootstrap ClusterRoleBinding still exists after job completion" >&2
   exit 1

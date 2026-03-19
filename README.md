@@ -31,7 +31,7 @@ The module deploys a local Helm chart via `helm_release` that creates:
   - installs the `flux-operator` Helm release if missing
   - applies the FluxInstance manifest with create-if-missing semantics
   - waits for the FluxInstance to become ready
-  - deletes its temporary `ServiceAccount` and `ClusterRoleBinding` before exiting
+  - cleans up all bootstrap transport resources (`ConfigMap`, `Secret`, `ServiceAccount`, `ClusterRoleBinding`) leaving only the completed Job and inventory `Secret` in the bootstrap namespace
 
 The Helm release is upgraded on every `terraform apply`, which re-runs the
 bootstrap Job. Helm waits for the hook Job to complete (or fail) before

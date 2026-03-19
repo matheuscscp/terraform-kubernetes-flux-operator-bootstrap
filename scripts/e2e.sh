@@ -12,6 +12,7 @@ module_image="ghcr.io/matheuscscp/terraform-kubernetes-flux-operator-bootstrap:$
 inventory_config_map_name="inventory"
 success_tf_dir="$(mktemp -d)"
 failure_tf_dir="$(mktemp -d)"
+unlock_tf_dir="$(mktemp -d)"
 failure_apply_log=""
 
 section() {
@@ -146,7 +147,7 @@ dump_bootstrap_logs() {
 
 cleanup() {
   kind delete cluster --name "${cluster_name}" || true
-  rm -rf "${success_tf_dir}" "${failure_tf_dir}"
+  rm -rf "${success_tf_dir}" "${failure_tf_dir}" "${unlock_tf_dir}"
 }
 
 trap cleanup EXIT
@@ -156,6 +157,7 @@ render_root_module() {
   bootstrap_namespace="$2"
   fault_injection_message="$3"
   secrets_mode="$4"
+  flux_operator_image_tag="${5:-}"
   fixtures_dir="${tf_dir}-fixtures"
   fixture_root_name="$(basename "${fixtures_dir}")"
   prerequisites_dir="${fixtures_dir}/tenants"
@@ -273,7 +275,8 @@ module "bootstrap" {
     tag = "${image_tag}"
   }
 
-  debug_fault_injection_message = "${fault_injection_message}"
+  debug_fault_injection_message  = "${fault_injection_message}"
+  debug_flux_operator_image_tag = "${flux_operator_image_tag}"
 
   gitops_resources = {
     flux_instance_path = "\${path.root}/../${fixture_root_name}/clusters/test/flux-system/flux-instance.yaml"
@@ -463,5 +466,45 @@ terraform -chdir="${failure_tf_dir}" apply -no-color -auto-approve
 assert_flux_runtime_ready
 assert_no_secret_material_in_state "${failure_tf_dir}"
 
+section "Helm Release Unlock"
+note "Uninstalling flux-operator to set up unlock test"
+helm --kube-context "kind-${cluster_name}" delete flux-operator -n flux-system --no-hooks || true
+note "Rendering unlock scenario with bogus flux-operator image tag"
+render_root_module "${unlock_tf_dir}" "flux-operator-bootstrap-unlock" "" "one" "bogus-tag-does-not-exist"
+note "Initializing unlock scenario"
+terraform -chdir="${unlock_tf_dir}" init -no-color -backend=false
+note "Running apply with bogus flux-operator image (should fail with timeout)"
+unlock_apply_log="${unlock_tf_dir}/apply.log"
+set +e
+terraform -chdir="${unlock_tf_dir}" apply -no-color -auto-approve >"${unlock_apply_log}" 2>&1
+unlock_status=$?
+set -e
+cat "${unlock_apply_log}"
+
+if [ "${unlock_status}" -eq 0 ]; then
+  echo "Bogus flux-operator image apply unexpectedly succeeded" >&2
+  exit 1
+fi
+
+note "Verifying flux-operator Helm release is stuck in pending-install or was marked failed"
+fo_status="$(helm --kube-context "kind-${cluster_name}" status flux-operator -n flux-system -o json 2>/dev/null \
+  | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4 || true)"
+if [ "${fo_status}" != "pending-install" ] && [ "${fo_status}" != "failed" ]; then
+  echo "Expected flux-operator release in pending-install or failed state, got: ${fo_status}" >&2
+  exit 1
+fi
+
+note "Re-rendering unlock scenario without bogus image to verify unlock and recovery"
+render_root_module "${unlock_tf_dir}" "flux-operator-bootstrap-unlock" "" "one"
+terraform -chdir="${unlock_tf_dir}" apply -no-color -auto-approve
+assert_flux_runtime_ready
+note "Verifying flux-operator release is now deployed"
+fo_status="$(helm --kube-context "kind-${cluster_name}" status flux-operator -n flux-system -o json 2>/dev/null \
+  | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4 || true)"
+if [ "${fo_status}" != "deployed" ]; then
+  echo "Expected flux-operator release in deployed state after unlock recovery, got: ${fo_status}" >&2
+  exit 1
+fi
+
 section "Assertions"
-note "Verified prerequisites, managed secret reconciliation, secret rotation, RBAC cleanup, Flux readiness, idempotent rerun, destroy behavior, and failure recovery"
+note "Verified prerequisites, managed secret reconciliation, secret rotation, RBAC cleanup, Flux readiness, idempotent rerun, destroy behavior, failure recovery, and Helm release unlock"

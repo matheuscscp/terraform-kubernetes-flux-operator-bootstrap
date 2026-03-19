@@ -13,5 +13,6 @@ managedResources:
 timeout: "5m"
 
 debugFaultInjectionMessage: ""
+debugFluxOperatorImageTag: ""
 
 applyTimestamp: ""

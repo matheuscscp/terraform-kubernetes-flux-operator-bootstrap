@@ -28,10 +28,11 @@ The module deploys a local Helm chart via `helm_release` that creates:
   - applies prerequisite manifests with create-if-missing semantics
   - creates the `FluxInstance` target namespace if missing
   - reconciles managed secrets into the target namespace with server-side apply
-  - installs the `flux-operator` Helm release if missing
+  - unlocks the `flux-operator` Helm release if stuck in a pending state from a previous failed attempt
+  - installs the `flux-operator` Helm release if missing, or deletes and reinstalls if in a failed state
   - applies the `FluxInstance` manifest with create-if-missing semantics
   - waits for the `FluxInstance` to become ready
-  - cleans up all bootstrap transport resources (`ConfigMap`, `Secret`, `ServiceAccount`, `ClusterRoleBinding`) leaving only the completed `Job` and inventory `Secret` in the bootstrap namespace
+  - cleans up all bootstrap transport resources (`ConfigMap`, `Secret`, `ServiceAccount`, `ClusterRoleBinding`) leaving only the completed `Job` and inventory `ConfigMap` in the bootstrap namespace
 
 The Helm release is upgraded on every `terraform apply`, which re-runs the
 bootstrap `Job`. Helm waits for the hook `Job` to complete (or fail) before

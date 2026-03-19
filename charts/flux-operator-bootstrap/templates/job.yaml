@@ -34,6 +34,8 @@ spec:
           value: {{ .Release.Name }}
         - name: DEBUG_FAULT_INJECTION_MESSAGE
           value: {{ .Values.debugFaultInjectionMessage | quote }}
+        - name: DEBUG_FLUX_OPERATOR_IMAGE_TAG
+          value: {{ .Values.debugFluxOperatorImageTag | quote }}
 {{- if .Values.managedResources.hasSecrets }}
         - name: SECRETS_FILE
           value: /bootstrap-secrets/secrets.yaml

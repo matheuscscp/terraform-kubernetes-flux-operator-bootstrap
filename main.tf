@@ -60,7 +60,8 @@ resource "helm_release" "this" {
       hasSecrets = local.has_secrets_yaml
     }
     timeout                    = var.timeout
-    debugFaultInjectionMessage = var.debug_fault_injection_message
+    debugFaultInjectionMessage    = var.debug_fault_injection_message
+    debugFluxOperatorImageTag     = var.debug_flux_operator_image_tag
     applyTimestamp             = plantimestamp()
   })]
 }

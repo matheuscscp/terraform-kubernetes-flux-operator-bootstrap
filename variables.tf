@@ -67,3 +67,10 @@ variable "debug_fault_injection_message" {
   default     = ""
   nullable    = false
 }
+
+variable "debug_flux_operator_image_tag" {
+  description = "Testing-only override for the flux-operator chart image tag. When non-empty, forces a short timeout on the flux-operator install."
+  type        = string
+  default     = ""
+  nullable    = false
+}

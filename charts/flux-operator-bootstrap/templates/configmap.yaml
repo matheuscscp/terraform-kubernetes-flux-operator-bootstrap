@@ -3,6 +3,8 @@ kind: ConfigMap
 metadata:
   name: {{ .Release.Name }}
   namespace: {{ .Release.Namespace }}
+  annotations:
+    flux-operator-bootstrap/apply-timestamp: {{ .Values.applyTimestamp | quote }}
 data:
   flux-instance.yaml: |
 {{ .Values.gitopsResources.fluxInstance | indent 4 }}

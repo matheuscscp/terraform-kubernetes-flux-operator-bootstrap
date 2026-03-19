@@ -12,6 +12,7 @@ config_map_name="${CONFIG_MAP_NAME:?CONFIG_MAP_NAME is required}"
 secrets_secret_name="${SECRETS_SECRET_NAME:-}"
 inventory_config_map_name="inventory"
 debug_fault_injection_message="${DEBUG_FAULT_INJECTION_MESSAGE:-}"
+debug_flux_operator_image_tag="${DEBUG_FLUX_OPERATOR_IMAGE_TAG:-}"
 field_manager="flux-operator-bootstrap"
 
 log() {
@@ -471,15 +472,81 @@ fi
 log "Managed secrets"
 reconcile_secrets "${scratch_dir}"
 
-if ! helm status flux-operator -n "${namespace}" >/dev/null 2>&1; then
-  log "Install Flux Operator"
+helm_release_status() {
+  helm status "$1" -n "$2" 2>/dev/null | /busybox/busybox awk '/^STATUS:/{print $2; exit}'
+}
+
+install_flux_operator() {
+  set_args=""
+  install_timeout="${timeout}"
+  if [ -n "${debug_flux_operator_image_tag}" ]; then
+    set_args="--set image.tag=${debug_flux_operator_image_tag} --set replicas=2"
+    install_timeout="15s"
+  fi
   helm install flux-operator oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator \
     --namespace="${namespace}" \
     --wait=watcher \
-    --timeout="${timeout}"
-else
-  log "Flux Operator exists"
-fi
+    --timeout="${install_timeout}" \
+    ${set_args}
+}
+
+unlock_helm_release() {
+  release_name="$1"
+  release_namespace="$2"
+
+  release_status="$(helm_release_status "${release_name}" "${release_namespace}")"
+
+  case "${release_status}" in
+    pending-install|pending-upgrade|pending-rollback)
+      log "Unlocking Helm release ${release_name} from stale '${release_status}' state"
+      # Find the latest release secret and patch its status to 'failed'.
+      # Helm stores releases as secrets with type helm.sh/release.v1, with the
+      # release data base64-encoded then gzip-compressed in the 'release' key.
+      latest_secret="$(kubectl get secrets -n "${release_namespace}" \
+        -l "name=${release_name},owner=helm" \
+        --sort-by=.metadata.creationTimestamp \
+        -o jsonpath='{.items[-1].metadata.name}' 2>/dev/null || true)"
+      if [ -z "${latest_secret}" ]; then
+        log "No Helm release secret found, deleting release history"
+        helm delete "${release_name}" -n "${release_namespace}" --no-hooks 2>/dev/null || true
+        return 0
+      fi
+      # Decode the release payload, patch the status, and re-encode.
+      release_payload="$(kubectl get secret "${latest_secret}" -n "${release_namespace}" \
+        -o go-template='{{index .data "release"}}' | /busybox/busybox base64 -d | /busybox/busybox gzip -d)"
+      patched_payload="$(printf '%s' "${release_payload}" \
+        | /busybox/busybox sed "s/\"status\":\"${release_status}\"/\"status\":\"failed\"/")"
+      encoded_payload="$(printf '%s' "${patched_payload}" | /busybox/busybox gzip | /busybox/busybox base64 -w 0)"
+      kubectl patch secret "${latest_secret}" -n "${release_namespace}" \
+        --type='merge' -p "{\"data\":{\"release\":\"${encoded_payload}\"}}" >/dev/null
+      log "Helm release ${release_name} unlocked"
+      ;;
+    "")
+      # No release found, nothing to unlock.
+      ;;
+    *)
+      # Release exists in a non-pending state (e.g. deployed, failed), nothing to do.
+      ;;
+  esac
+}
+
+unlock_helm_release "flux-operator" "${namespace}"
+flux_operator_status="$(helm_release_status "flux-operator" "${namespace}")"
+case "${flux_operator_status}" in
+  "deployed")
+    log "Flux Operator exists"
+    ;;
+  "failed")
+    log "Delete failed Flux Operator release"
+    helm delete flux-operator -n "${namespace}" --no-hooks >/dev/null
+    log "Install Flux Operator"
+    install_flux_operator
+    ;;
+  *)
+    log "Install Flux Operator"
+    install_flux_operator
+    ;;
+esac
 
 log "FluxInstance CRD"
 wait_for_flux_instance_crd

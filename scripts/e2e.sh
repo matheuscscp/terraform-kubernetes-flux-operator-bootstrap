@@ -345,7 +345,7 @@ if [ "${remaining_normalized}" != "${expected}" ]; then
   exit 1
 fi
 note "Verifying bootstrap ClusterRoleBinding was removed"
-if kubectl --context "kind-${cluster_name}" get clusterrolebinding flux-operator-bootstrap-flux-operator-bootstrap >/dev/null 2>&1; then
+if kubectl --context "kind-${cluster_name}" get clusterrolebinding flux-operator-bootstrap >/dev/null 2>&1; then
   echo "Bootstrap ClusterRoleBinding still exists after job completion" >&2
   exit 1
 fi

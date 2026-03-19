@@ -29,7 +29,7 @@ spec:
         - name: SERVICE_ACCOUNT_NAME
           value: {{ .Release.Name }}
         - name: CLUSTER_ROLE_BINDING_NAME
-          value: {{ .Release.Name }}-{{ .Release.Namespace }}
+          value: {{ .Release.Namespace }}
         - name: CONFIG_MAP_NAME
           value: {{ .Release.Name }}
         - name: DEBUG_FAULT_INJECTION_MESSAGE

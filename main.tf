@@ -23,7 +23,7 @@ resource "kubernetes_secret_v1" "this" {
   depends_on = [kubernetes_namespace_v1.this]
 
   metadata {
-    name      = "flux-operator-bootstrap-secrets"
+    name      = "flux-operator-bootstrap"
     namespace = var.bootstrap_namespace
   }
 

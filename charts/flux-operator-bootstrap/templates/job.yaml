@@ -38,7 +38,7 @@ spec:
         - name: SECRETS_FILE
           value: /bootstrap-secrets/secrets.yaml
         - name: SECRETS_SECRET_NAME
-          value: flux-operator-bootstrap-secrets
+          value: {{ .Release.Name }}
 {{- end }}
         volumeMounts:
         - name: bootstrap-manifest
@@ -56,5 +56,5 @@ spec:
 {{- if .Values.managedResources.hasSecrets }}
       - name: bootstrap-secrets
         secret:
-          secretName: flux-operator-bootstrap-secrets
+          secretName: {{ .Release.Name }}
 {{- end }}

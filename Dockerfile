@@ -1,4 +1,4 @@
-FROM ghcr.io/controlplaneio-fluxcd/flux-operator-cli:v0.44.0@sha256:63521eeb823e79abd6874d6e1b4b13e92e2df6f873fd036bc34e48a5e8a8a147 AS flux-operator-cli
+FROM ghcr.io/controlplaneio-fluxcd/flux-operator-cli:v0.45.1@sha256:cf844df62557316644f07851ac3fae4aa00daaad3a018b53bd5add95bcfda907 AS flux-operator-cli
 
 FROM alpine:3.23@sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659 AS builder
 

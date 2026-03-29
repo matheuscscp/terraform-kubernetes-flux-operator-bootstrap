@@ -43,7 +43,8 @@ resource "helm_release" "this" {
   namespace        = var.bootstrap_namespace
   chart            = "${path.module}/charts/flux-operator-bootstrap"
   create_namespace = false
-  upgrade_install  = true
+  upgrade_install  = false
+  replace          = true
   wait             = true
   timeout          = local.timeout_seconds
   max_history      = 5

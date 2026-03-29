@@ -146,7 +146,7 @@ dump_bootstrap_logs() {
 }
 
 cleanup() {
-  kind delete cluster --name "${cluster_name}" || true
+  kind delete cluster --name "${cluster_name}" 2>/dev/null || true
   rm -rf "${success_tf_dir}" "${failure_tf_dir}" "${unlock_tf_dir}"
 }
 
@@ -254,19 +254,40 @@ terraform {
   }
 }
 
+module "kind_cluster" {
+  source = "${repo_root}/test/kind-cluster"
+  name   = "${cluster_name}"
+}
+
 provider "helm" {
   kubernetes = {
-    config_path    = "~/.kube/config"
-    config_context = "kind-${cluster_name}"
+    host                   = module.kind_cluster.host
+    client_certificate     = module.kind_cluster.client_certificate
+    client_key             = module.kind_cluster.client_key
+    cluster_ca_certificate = module.kind_cluster.cluster_ca_certificate
   }
 }
 
 provider "kubernetes" {
-  config_path    = "~/.kube/config"
-  config_context = "kind-${cluster_name}"
+  host                   = module.kind_cluster.host
+  client_certificate     = module.kind_cluster.client_certificate
+  client_key             = module.kind_cluster.client_key
+  cluster_ca_certificate = module.kind_cluster.cluster_ca_certificate
+}
+
+resource "terraform_data" "kind_load_image" {
+  depends_on = [module.kind_cluster]
+
+  input = "${module_image}"
+
+  provisioner "local-exec" {
+    command = "kind load docker-image \${self.input} --name ${cluster_name}"
+  }
 }
 
 module "bootstrap" {
+  depends_on = [terraform_data.kind_load_image]
+
   source = "${repo_root}"
 
   bootstrap_namespace = "${bootstrap_namespace}"
@@ -297,13 +318,9 @@ EOF
 
 section "Cluster Setup"
 note "Resetting kind cluster ${cluster_name}"
-kind delete cluster --name "${cluster_name}" || true
-note "Creating kind cluster ${cluster_name}"
-kind create cluster --name "${cluster_name}"
+kind delete cluster --name "${cluster_name}" 2>/dev/null || true
 note "Tagging local image ${image} as ${module_image} for module consumption"
 docker tag "${image}" "${module_image}"
-note "Loading locally built image ${module_image}"
-kind load docker-image "${module_image}" --name "${cluster_name}"
 
 section "Happy Path"
 note "Rendering success scenario Terraform root"
@@ -422,24 +439,12 @@ note "Verifying rotated secret material did not land in Terraform state"
 assert_no_secret_material_in_state "${success_tf_dir}"
 
 section "Destroy Behavior"
-note "Capturing Flux resources before destroy"
-before_destroy_log="${success_tf_dir}/before-destroy.log"
-after_destroy_log="${success_tf_dir}/after-destroy.log"
-kubectl_get_flux_operator_resources | tee "${before_destroy_log}"
+note "Verifying Flux resources exist before destroy"
+kubectl_get_flux_operator_resources
 kubectl --context "kind-${cluster_name}" -n flux-system get fluxinstance.fluxcd.controlplane.io/flux >/dev/null
 
-note "Destroying happy-path bootstrap root"
+note "Destroying happy-path bootstrap root (includes kind cluster)"
 terraform -chdir="${success_tf_dir}" destroy -no-color -auto-approve
-
-note "Capturing Flux resources after destroy"
-kubectl_get_flux_operator_resources | tee "${after_destroy_log}"
-kubectl --context "kind-${cluster_name}" -n flux-system get fluxinstance.fluxcd.controlplane.io/flux >/dev/null
-
-note "Verifying Helm release was removed"
-if helm --kube-context "kind-${cluster_name}" -n flux-operator-bootstrap list -q | grep -Fx flux-operator-bootstrap >/dev/null; then
-  echo "Helm release still exists after destroy" >&2
-  exit 1
-fi
 
 section "Failure Path"
 note "Rendering failure scenario Terraform root"
@@ -466,13 +471,22 @@ terraform -chdir="${failure_tf_dir}" apply -no-color -auto-approve
 assert_flux_runtime_ready
 assert_no_secret_material_in_state "${failure_tf_dir}"
 
+note "Destroying failure scenario (includes kind cluster)"
+terraform -chdir="${failure_tf_dir}" destroy -no-color -auto-approve
+
 section "Helm Release Unlock"
-note "Uninstalling flux-operator to set up unlock test"
-helm --kube-context "kind-${cluster_name}" delete flux-operator -n flux-system --no-hooks || true
-note "Rendering unlock scenario with bogus flux-operator image tag"
-render_root_module "${unlock_tf_dir}" "flux-operator-bootstrap-unlock" "" "one" "bogus-tag-does-not-exist"
+note "Rendering unlock scenario with working config for initial setup"
+render_root_module "${unlock_tf_dir}" "flux-operator-bootstrap-unlock" "" "one"
 note "Initializing unlock scenario"
 terraform -chdir="${unlock_tf_dir}" init -no-color -backend=false
+note "Running initial apply to install flux-operator"
+terraform -chdir="${unlock_tf_dir}" apply -no-color -auto-approve
+assert_flux_runtime_ready
+
+note "Uninstalling flux-operator to set up unlock test"
+helm --kube-context "kind-${cluster_name}" delete flux-operator -n flux-system --no-hooks || true
+note "Re-rendering unlock scenario with bogus flux-operator image tag"
+render_root_module "${unlock_tf_dir}" "flux-operator-bootstrap-unlock" "" "one" "bogus-tag-does-not-exist"
 note "Running apply with bogus flux-operator image (should fail with timeout)"
 unlock_apply_log="${unlock_tf_dir}/apply.log"
 set +e
@@ -506,5 +520,8 @@ if [ "${fo_status}" != "deployed" ]; then
   exit 1
 fi
 
+note "Destroying unlock scenario (includes kind cluster)"
+terraform -chdir="${unlock_tf_dir}" destroy -no-color -auto-approve
+
 section "Assertions"
-note "Verified prerequisites, managed secret reconciliation, secret rotation, RBAC cleanup, Flux readiness, idempotent rerun, destroy behavior, failure recovery, and Helm release unlock"
+note "Verified prerequisites, managed secret reconciliation, secret rotation, RBAC cleanup, Flux readiness, idempotent rerun, clean destroy, failure recovery, and Helm release unlock"

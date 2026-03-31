@@ -85,7 +85,7 @@ provider "kubernetes" {
 
 module "flux_operator_bootstrap" {
   source  = "matheuscscp/flux-operator-bootstrap/kubernetes"
-  version = "0.0.17"
+  version = "0.0.18"
 
   gitops_resources = {
     flux_instance_path = "${path.root}/clusters/staging/flux-system/flux-instance.yaml"

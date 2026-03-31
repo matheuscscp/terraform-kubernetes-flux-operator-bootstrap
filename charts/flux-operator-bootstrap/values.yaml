@@ -15,4 +15,4 @@ timeout: "5m"
 debugFaultInjectionMessage: ""
 debugFluxOperatorImageTag: ""
 
-applyTimestamp: ""
+revision: 0

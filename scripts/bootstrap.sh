@@ -428,11 +428,7 @@ cleanup() {
   if ! kubectl delete configmap "${config_map_name}" -n "${bootstrap_namespace}" --ignore-not-found=true >/dev/null; then
     log "Failed to delete ConfigMap ${bootstrap_namespace}/${config_map_name}"
   fi
-  if [ -n "${secrets_secret_name}" ]; then
-    if ! kubectl delete secret "${secrets_secret_name}" -n "${bootstrap_namespace}" --ignore-not-found=true >/dev/null; then
-      log "Failed to delete Secret ${bootstrap_namespace}/${secrets_secret_name}"
-    fi
-  fi
+  # The secrets Secret is owned by Terraform and not cleaned up here.
   if ! kubectl delete serviceaccount "${service_account_name}" -n "${bootstrap_namespace}" --ignore-not-found=true >/dev/null; then
     log "Failed to delete ServiceAccount ${bootstrap_namespace}/${service_account_name}"
   fi

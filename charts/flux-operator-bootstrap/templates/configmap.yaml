@@ -4,7 +4,7 @@ metadata:
   name: {{ .Release.Name }}
   namespace: {{ .Release.Namespace }}
   annotations:
-    flux-operator-bootstrap/apply-timestamp: {{ .Values.applyTimestamp | quote }}
+    flux-operator-bootstrap/revision: {{ .Values.revision | quote }}
 data:
   flux-instance.yaml: |
 {{ .Values.gitopsResources.fluxInstance | indent 4 }}

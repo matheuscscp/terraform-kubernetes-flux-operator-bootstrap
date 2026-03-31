@@ -55,6 +55,12 @@ variable "image" {
   nullable = false
 }
 
+variable "revision" {
+  description = "Revision number that controls when the bootstrap job runs and managed secrets are reconciled. Bump this value to trigger a new bootstrap run."
+  type        = number
+  nullable    = false
+}
+
 variable "timeout" {
   description = "Shared timeout for FluxInstance readiness waiting and the Helm release timeout."
   type        = string

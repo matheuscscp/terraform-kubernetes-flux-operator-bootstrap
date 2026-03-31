@@ -8,7 +8,7 @@ locals {
   timeout_seconds = local.timeout_unit == "s" ? local.timeout_value : (
     local.timeout_unit == "m" ? local.timeout_value * 60 : local.timeout_value * 3600
   )
-  secrets_yaml_revision = local.has_secrets_yaml ? parseint(formatdate("YYYYMMDDhhmmss", plantimestamp()), 10) : 0
+  secrets_yaml_revision = local.has_secrets_yaml ? var.revision : 0
 }
 
 resource "kubernetes_namespace_v1" "this" {
@@ -61,8 +61,8 @@ resource "helm_release" "this" {
       hasSecrets = local.has_secrets_yaml
     }
     timeout                    = var.timeout
-    debugFaultInjectionMessage    = var.debug_fault_injection_message
-    debugFluxOperatorImageTag     = var.debug_flux_operator_image_tag
-    applyTimestamp             = plantimestamp()
+    debugFaultInjectionMessage = var.debug_fault_injection_message
+    debugFluxOperatorImageTag  = var.debug_flux_operator_image_tag
+    revision                   = var.revision
   })]
 }

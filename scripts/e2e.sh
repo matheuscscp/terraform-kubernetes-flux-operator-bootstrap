@@ -158,6 +158,7 @@ render_root_module() {
   fault_injection_message="$3"
   secrets_mode="$4"
   flux_operator_image_tag="${5:-}"
+  revision="${6:-1}"
   fixtures_dir="${tf_dir}-fixtures"
   fixture_root_name="$(basename "${fixtures_dir}")"
   prerequisites_dir="${fixtures_dir}/tenants"
@@ -291,6 +292,7 @@ module "bootstrap" {
   source = "${repo_root}"
 
   bootstrap_namespace = "${bootstrap_namespace}"
+  revision            = ${revision}
 
   image = {
     tag = "${image_tag}"
@@ -342,7 +344,7 @@ if [ "$(inventory_entries flux-operator-bootstrap)" != "${expected_inventory}" ]
   echo "Got: $(inventory_entries flux-operator-bootstrap)" >&2
   exit 1
 fi
-note "Verifying only the completed Job and inventory remain in the bootstrap namespace"
+note "Verifying only the completed Job, inventory, and managed secret remain in the bootstrap namespace"
 remaining="$(kubectl --context "kind-${cluster_name}" -n flux-operator-bootstrap get all,secrets,configmaps \
   --no-headers -o custom-columns=KIND:.kind,NAME:.metadata.name 2>/dev/null \
   | grep -v "^Secret.*sh\.helm\.release" \
@@ -353,6 +355,7 @@ expected="$(printf '%s\n' \
   "Job flux-operator-bootstrap" \
   "Pod flux-operator-bootstrap-" \
   "ConfigMap inventory" \
+  "Secret flux-operator-bootstrap" \
   | sort)"
 # Pod name has a random suffix, match by prefix
 remaining_normalized="$(printf '%s\n' "${remaining}" | sed 's/^\(Pod flux-operator-bootstrap-\).*/\1/')"
@@ -371,6 +374,11 @@ if kubectl --context "kind-${cluster_name}" get clusterrolebinding flux-operator
 fi
 note "Verifying managed secret material did not land in Terraform state"
 assert_no_secret_material_in_state "${success_tf_dir}"
+
+section "No-op Plan"
+note "Running plan with identical inputs to verify zero diff"
+terraform -chdir="${success_tf_dir}" plan -no-color -detailed-exitcode
+note "Confirmed: no changes when revision is unchanged"
 
 section "Idempotency"
 note "Introducing drift, then removing one managed Secret from desired state"
@@ -391,7 +399,7 @@ if ! secret_has_field_manager "e2e-drift-manager"; then
   echo "Managed Secret was not updated with the e2e drift field manager" >&2
   exit 1
 fi
-render_root_module "${success_tf_dir}" "flux-operator-bootstrap" "" "one"
+render_root_module "${success_tf_dir}" "flux-operator-bootstrap" "" "one" "" 2
 
 note "Running second bootstrap apply to verify idempotent rerun"
 terraform -chdir="${success_tf_dir}" apply -no-color -auto-approve
@@ -429,7 +437,7 @@ fi
 
 section "Secret Rotation"
 note "Rotating managed secret value"
-render_root_module "${success_tf_dir}" "flux-operator-bootstrap" "" "rotated"
+render_root_module "${success_tf_dir}" "flux-operator-bootstrap" "" "rotated" "" 3
 terraform -chdir="${success_tf_dir}" apply -no-color -auto-approve
 if [ "$(secret_value bootstrap-managed)" != "rotated" ]; then
   echo "Managed Secret was not updated after rotation" >&2
@@ -466,7 +474,7 @@ if [ "${failure_status}" -eq 0 ]; then
 fi
 
 note "Re-rendering failure scenario without fault injection to verify recovery"
-render_root_module "${failure_tf_dir}" "flux-operator-bootstrap-failure" "" "one"
+render_root_module "${failure_tf_dir}" "flux-operator-bootstrap-failure" "" "one" "" 2
 terraform -chdir="${failure_tf_dir}" apply -no-color -auto-approve
 assert_flux_runtime_ready
 assert_no_secret_material_in_state "${failure_tf_dir}"
@@ -486,7 +494,7 @@ assert_flux_runtime_ready
 note "Uninstalling flux-operator to set up unlock test"
 helm --kube-context "kind-${cluster_name}" delete flux-operator -n flux-system --no-hooks || true
 note "Re-rendering unlock scenario with bogus flux-operator image tag"
-render_root_module "${unlock_tf_dir}" "flux-operator-bootstrap-unlock" "" "one" "bogus-tag-does-not-exist"
+render_root_module "${unlock_tf_dir}" "flux-operator-bootstrap-unlock" "" "one" "bogus-tag-does-not-exist" 2
 note "Running apply with bogus flux-operator image (should fail with timeout)"
 unlock_apply_log="${unlock_tf_dir}/apply.log"
 set +e
@@ -509,7 +517,7 @@ if [ "${fo_status}" != "pending-install" ] && [ "${fo_status}" != "failed" ]; th
 fi
 
 note "Re-rendering unlock scenario without bogus image to verify unlock and recovery"
-render_root_module "${unlock_tf_dir}" "flux-operator-bootstrap-unlock" "" "one"
+render_root_module "${unlock_tf_dir}" "flux-operator-bootstrap-unlock" "" "one" "" 3
 terraform -chdir="${unlock_tf_dir}" apply -no-color -auto-approve
 assert_flux_runtime_ready
 note "Verifying flux-operator release is now deployed"

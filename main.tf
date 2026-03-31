@@ -8,7 +8,7 @@ locals {
   timeout_seconds = local.timeout_unit == "s" ? local.timeout_value : (
     local.timeout_unit == "m" ? local.timeout_value * 60 : local.timeout_value * 3600
   )
-  secrets_yaml_revision = local.has_secrets_yaml ? var.revision : 0
+  secrets_yaml_revision = local.has_secrets_yaml ? parseint(substr(sha256(var.managed_resources.secrets_yaml), 0, 12), 16) : 0
 }
 
 resource "kubernetes_namespace_v1" "this" {
@@ -58,7 +58,9 @@ resource "helm_release" "this" {
       prerequisites = local.prerequisite_files
     }
     managedResources = {
-      hasSecrets = local.has_secrets_yaml
+      hasSecrets  = local.has_secrets_yaml
+      secretsHash = local.has_secrets_yaml ? sha256(var.managed_resources.secrets_yaml) : ""
+      runtimeInfo = var.managed_resources.runtime_info
     }
     timeout                    = var.timeout
     debugFaultInjectionMessage = var.debug_fault_injection_message

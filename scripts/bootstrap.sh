@@ -10,6 +10,8 @@ service_account_name="${SERVICE_ACCOUNT_NAME:?SERVICE_ACCOUNT_NAME is required}"
 cluster_role_binding_name="${CLUSTER_ROLE_BINDING_NAME:?CLUSTER_ROLE_BINDING_NAME is required}"
 config_map_name="${CONFIG_MAP_NAME:?CONFIG_MAP_NAME is required}"
 secrets_secret_name="${SECRETS_SECRET_NAME:-}"
+runtime_info_file="${RUNTIME_INFO_FILE:-}"
+runtime_info_config_map_name="${RUNTIME_INFO_CONFIG_MAP_NAME:-runtime-info}"
 inventory_config_map_name="inventory"
 debug_fault_injection_message="${DEBUG_FAULT_INJECTION_MESSAGE:-}"
 debug_flux_operator_image_tag="${DEBUG_FLUX_OPERATOR_IMAGE_TAG:-}"
@@ -228,88 +230,119 @@ wait_for_flux_instance_crd() {
   return 1
 }
 
-secret_has_foreign_field_managers() {
-  secret_name="$1"
+# Field managers to strip before SSA, matching kustomize-controller defaults.
+disallowed_field_managers="kubectl before-first-apply"
 
-  managers="$(
-    kubectl get secret "${secret_name}" -n "${namespace}" \
-      -o jsonpath='{range .metadata.managedFields[*]}{.manager}{"\n"}{end}' 2>/dev/null || true
-  )"
+strip_disallowed_field_managers() {
+  resource_kind="$1"
+  resource_name="$2"
+  resource_namespace="$3"
 
-  if [ -z "${managers}" ]; then
-    return 1
+  if ! kubectl get "${resource_kind}" "${resource_name}" -n "${resource_namespace}" >/dev/null 2>&1; then
+    return 0
   fi
 
-  printf '%s\n' "${managers}" | /busybox/busybox awk -v current="${field_manager}" '
-    NF > 0 && $0 != current {
-      found = 1
-      exit
-    }
-    END {
-      exit(found ? 0 : 1)
-    }
-  '
+  managed_fields="$(kubectl get "${resource_kind}" "${resource_name}" -n "${resource_namespace}" \
+    -o go-template='{{range $i, $mf := .metadata.managedFields}}{{if $i}} {{end}}{{$mf.manager}}={{$mf.operation}}{{end}}' 2>/dev/null || true)"
+
+  if [ -z "${managed_fields}" ]; then
+    return 0
+  fi
+
+  # Collect indices to remove (in reverse order so indices stay valid).
+  indices_to_remove=""
+  idx=0
+  for manager_op in ${managed_fields}; do
+    manager="${manager_op%%=*}"
+    for disallowed in ${disallowed_field_managers}; do
+      if [ "${manager}" = "${disallowed}" ]; then
+        indices_to_remove="${idx} ${indices_to_remove}"
+        break
+      fi
+    done
+    idx=$((idx + 1))
+  done
+
+  if [ -z "${indices_to_remove}" ]; then
+    return 0
+  fi
+
+  patch="["
+  first="true"
+  for i in ${indices_to_remove}; do
+    if [ "${first}" = "true" ]; then
+      first="false"
+    else
+      patch="${patch},"
+    fi
+    patch="${patch}{\"op\":\"remove\",\"path\":\"/metadata/managedFields/${i}\"}"
+  done
+  patch="${patch}]"
+
+  log "  strip disallowed field managers from ${resource_kind} ${resource_namespace}/${resource_name}"
+  kubectl patch "${resource_kind}" "${resource_name}" -n "${resource_namespace}" \
+    --type=json -p "${patch}" >/dev/null
 }
 
-reconcile_secret_document() {
+reconcile_managed_resource() {
   manifest_file="$1"
+  allowed_kinds="$2"
   manifest_kind="$(extract_top_level_value "${manifest_file}" kind)"
   manifest_name="$(extract_manifest_metadata_value "${manifest_file}" name)"
   manifest_namespace="$(extract_manifest_metadata_value "${manifest_file}" namespace)"
 
-  if [ "${manifest_kind}" != "Secret" ]; then
-    fail "secrets_yaml must only contain Secret objects, got ${manifest_kind:-<unknown>}"
+  found_allowed="false"
+  for kind in ${allowed_kinds}; do
+    if [ "${manifest_kind}" = "${kind}" ]; then
+      found_allowed="true"
+      break
+    fi
+  done
+  if [ "${found_allowed}" = "false" ]; then
+    fail "managed resource must be one of: ${allowed_kinds}, got ${manifest_kind:-<unknown>}"
     return 1
   fi
 
   if [ -z "${manifest_name}" ]; then
-    fail "secrets_yaml contains a Secret without metadata.name"
+    fail "managed resource has no metadata.name"
     return 1
   fi
 
   if [ -n "${manifest_namespace}" ] && [ "${manifest_namespace}" != "${namespace}" ]; then
-    fail "Secret ${manifest_name} must omit metadata.namespace or set it to ${namespace}"
+    fail "${manifest_kind} ${manifest_name} must omit metadata.namespace or set it to ${namespace}"
     return 1
   fi
 
-  if kubectl get secret "${manifest_name}" -n "${namespace}" >/dev/null 2>&1; then
-    if secret_has_foreign_field_managers "${manifest_name}"; then
-      log "- delete Secret ${namespace}/${manifest_name} (foreign field managers)"
-      kubectl delete secret "${manifest_name}" -n "${namespace}" >/dev/null
-    fi
-  fi
+  strip_disallowed_field_managers "${manifest_kind}" "${manifest_name}" "${namespace}"
 
   if ! dry_run_output="$(kubectl apply --server-side --dry-run=server --force-conflicts --field-manager="${field_manager}" -f "${manifest_file}" -n "${namespace}" 2>&1)"; then
     printf '%s\n' "${dry_run_output}" >&2
-    fail "Failed to dry-run apply Secret ${namespace}/${manifest_name}"
+    fail "Failed to dry-run apply ${manifest_kind} ${namespace}/${manifest_name}"
     return 1
   fi
 
   case "${dry_run_output}" in
     *"unchanged (server dry run)"*)
-      secret_state="in-sync"
+      resource_state="in-sync"
       ;;
     *"created (server dry run)"*)
-      secret_state="missing"
+      resource_state="missing"
       ;;
-    *"configured (server dry run)"*)
-      secret_state="drifted"
-      ;;
-    *"serverside-applied (server dry run)"*)
-      secret_state="drifted"
+    *"configured (server dry run)"*|*"serverside-applied (server dry run)"*)
+      resource_state="drifted"
       ;;
     *)
-      fail "Unexpected dry-run result for Secret ${namespace}/${manifest_name}: ${dry_run_output}"
+      fail "Unexpected dry-run result for ${manifest_kind} ${namespace}/${manifest_name}: ${dry_run_output}"
       return 1
       ;;
   esac
 
-  if [ "${secret_state}" = "in-sync" ]; then
-    log "= Secret ${namespace}/${manifest_name}"
+  if [ "${resource_state}" = "in-sync" ]; then
+    log "= ${manifest_kind} ${namespace}/${manifest_name}"
     return 0
   fi
 
-  log "~ Secret ${namespace}/${manifest_name} (${secret_state})"
+  log "~ ${manifest_kind} ${namespace}/${manifest_name} (${resource_state})"
   kubectl apply --server-side --force-conflicts --field-manager="${field_manager}" -f "${manifest_file}" -n "${namespace}" >/dev/null
 }
 
@@ -380,7 +413,7 @@ garbage_collect_removed_entries() {
   done < "${previous_entries_file}"
 }
 
-reconcile_secrets() {
+reconcile_managed_resources() {
   scratch_dir="$1"
   previous_entries_file="${scratch_dir}/previous-inventory-entries.txt"
   current_entries_file="${scratch_dir}/current-inventory-entries.txt"
@@ -388,6 +421,7 @@ reconcile_secrets() {
   load_inventory_entries "${previous_entries_file}"
   : > "${current_entries_file}"
 
+  # Managed secrets
   if [ -n "${secrets_file}" ] && [ -f "${secrets_file}" ]; then
     split_dir="${scratch_dir}/managed-secrets"
     split_yaml_documents "${secrets_file}" "${split_dir}" "secret"
@@ -399,13 +433,13 @@ reconcile_secrets() {
       fi
 
       found_secret="true"
-      current_secret_name="$(extract_manifest_metadata_value "${manifest_file}" name)"
-      if [ -z "${current_secret_name}" ]; then
+      current_name="$(extract_manifest_metadata_value "${manifest_file}" name)"
+      if [ -z "${current_name}" ]; then
         fail "secrets_yaml contains a Secret without metadata.name"
         return 1
       fi
-      reconcile_secret_document "${manifest_file}"
-      printf 'Secret/%s/%s\n' "${namespace}" "${current_secret_name}" >> "${current_entries_file}"
+      reconcile_managed_resource "${manifest_file}" "Secret"
+      printf 'Secret/%s/%s\n' "${namespace}" "${current_name}" >> "${current_entries_file}"
     done
 
     if [ "${found_secret}" = "false" ]; then
@@ -413,6 +447,19 @@ reconcile_secrets() {
     fi
   else
     log "No managed secrets"
+  fi
+
+  # Runtime info ConfigMap
+  if [ -n "${runtime_info_file}" ] && [ -f "${runtime_info_file}" ]; then
+    runtime_info_manifest="${scratch_dir}/runtime-info-configmap.yaml"
+    kubectl create configmap "${runtime_info_config_map_name}" \
+      -n "${namespace}" \
+      --from-env-file="${runtime_info_file}" \
+      --dry-run=client -o yaml > "${runtime_info_manifest}"
+    reconcile_managed_resource "${runtime_info_manifest}" "ConfigMap"
+    printf 'ConfigMap/%s/%s\n' "${namespace}" "${runtime_info_config_map_name}" >> "${current_entries_file}"
+  else
+    log "No runtime info"
   fi
 
   /busybox/busybox sort -u -o "${current_entries_file}" "${current_entries_file}"
@@ -465,8 +512,19 @@ else
   kubectl create namespace "${namespace}" >/dev/null
 fi
 
-log "Managed secrets"
-reconcile_secrets "${scratch_dir}"
+log "Managed resources"
+reconcile_managed_resources "${scratch_dir}"
+
+if [ -n "${runtime_info_file}" ] && [ -f "${runtime_info_file}" ]; then
+  log "Substitute runtime info variables in FluxInstance manifest"
+  export_args=""
+  while IFS="=" read -r key value; do
+    export_args="${export_args} ${key}=${value}"
+  done < "${runtime_info_file}"
+  /busybox/busybox sh -c "export${export_args}; flux envsubst --strict" \
+    < "${flux_instance_file}" > "${scratch_dir}/flux-instance.yaml"
+  flux_instance_file="${scratch_dir}/flux-instance.yaml"
+fi
 
 helm_release_status() {
   helm status "$1" -n "$2" 2>/dev/null | /busybox/busybox awk '/^STATUS:/{print $2; exit}'

@@ -31,6 +31,7 @@ variable "managed_resources" {
   description = "Resources that are applied and reconciled by Terraform on every apply. Unlike gitops_resources, these remain under Terraform's ownership and will be updated to match the desired state on each run."
   type = object({
     secrets_yaml = optional(string, "")
+    runtime_info = optional(map(string), {})
   })
   sensitive = true
   default   = {}

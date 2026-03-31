@@ -231,6 +231,8 @@ kind: FluxInstance
 metadata:
   name: flux
   namespace: flux-system
+  annotations:
+    e2e-cluster-name: ${cluster_name}
 spec:
   components:
   - source-controller
@@ -313,6 +315,9 @@ module "bootstrap" {
     secrets_yaml = <<YAML
 ${managed_secrets_yaml}
 YAML
+    runtime_info = {
+      cluster_name = "${cluster_name}"
+    }
   }
 }
 EOF
@@ -336,8 +341,25 @@ note "Verifying FluxInstance and Flux workloads are ready"
 assert_flux_runtime_ready
 note "Verifying ordered prerequisites and managed secrets were applied"
 assert_bootstrap_inputs_applied
+note "Verifying runtime-info ConfigMap was created in target namespace"
+ri_value="$(kubectl --context "kind-${cluster_name}" -n flux-system get configmap/runtime-info \
+  -o jsonpath='{.data.cluster_name}')"
+if [ "${ri_value}" != "${cluster_name}" ]; then
+  echo "runtime-info ConfigMap did not contain expected cluster_name value" >&2
+  echo "Expected: ${cluster_name}, Got: ${ri_value}" >&2
+  exit 1
+fi
+note "Verifying FluxInstance annotation was substituted with runtime info"
+fi_annotation="$(kubectl --context "kind-${cluster_name}" -n flux-system get \
+  fluxinstance.fluxcd.controlplane.io/flux \
+  -o jsonpath='{.metadata.annotations.e2e-cluster-name}')"
+if [ "${fi_annotation}" != "${cluster_name}" ]; then
+  echo "FluxInstance annotation was not substituted with runtime info" >&2
+  echo "Expected: ${cluster_name}, Got: ${fi_annotation}" >&2
+  exit 1
+fi
 initial_managed_secret_uid="$(secret_uid bootstrap-managed)"
-expected_inventory="$(printf '%s\n' '- Secret/flux-system/bootstrap-managed' '- Secret/flux-system/bootstrap-managed-removed')"
+expected_inventory="$(printf '%s\n' '- ConfigMap/flux-system/runtime-info' '- Secret/flux-system/bootstrap-managed' '- Secret/flux-system/bootstrap-managed-removed')"
 if [ "$(inventory_entries flux-operator-bootstrap)" != "${expected_inventory}" ]; then
   echo "Managed secret inventory was not created with the expected entries" >&2
   echo "Expected: ${expected_inventory}" >&2
@@ -378,11 +400,11 @@ assert_no_secret_material_in_state "${success_tf_dir}"
 section "No-op Plan"
 note "Running plan with identical inputs to verify zero diff"
 terraform -chdir="${success_tf_dir}" plan -no-color -detailed-exitcode
-note "Confirmed: no changes when revision is unchanged"
+note "Confirmed: no changes when inputs are unchanged"
 
 section "Idempotency"
 note "Introducing drift, then removing one managed Secret from desired state"
-kubectl --context "kind-${cluster_name}" apply --server-side --force-conflicts --field-manager=e2e-drift-manager -f - >/dev/null <<'YAML'
+kubectl --context "kind-${cluster_name}" apply --server-side --force-conflicts --field-manager=kubectl -f - >/dev/null <<'YAML'
 apiVersion: v1
 kind: Secret
 metadata:
@@ -395,8 +417,8 @@ YAML
 kubectl --context "kind-${cluster_name}" -n bootstrap-prereq patch configmap bootstrap-prereq \
   --type merge \
   -p '{"data":{"value":"drifted"}}' >/dev/null
-if ! secret_has_field_manager "e2e-drift-manager"; then
-  echo "Managed Secret was not updated with the e2e drift field manager" >&2
+if ! secret_has_field_manager "kubectl"; then
+  echo "Managed Secret was not updated with the kubectl field manager" >&2
   exit 1
 fi
 render_root_module "${success_tf_dir}" "flux-operator-bootstrap" "" "one" "" 2
@@ -411,19 +433,19 @@ if [ "$(secret_value bootstrap-managed)" != "expected" ]; then
   echo "Managed Secret drift was not corrected by the second apply" >&2
   exit 1
 fi
-if [ "$(secret_uid bootstrap-managed)" = "${initial_managed_secret_uid}" ]; then
-  echo "Managed Secret was not recreated after detecting a foreign field manager" >&2
+if [ "$(secret_uid bootstrap-managed)" != "${initial_managed_secret_uid}" ]; then
+  echo "Managed Secret UID changed unexpectedly (should be updated in-place, not recreated)" >&2
   exit 1
 fi
-if secret_has_field_manager "e2e-drift-manager"; then
-  echo "Managed Secret still contains the e2e drift field manager after reconciliation" >&2
+if secret_has_field_manager "kubectl"; then
+  echo "Disallowed field manager 'kubectl' was not stripped from managed Secret after reconciliation" >&2
   exit 1
 fi
 if target_secret_exists "bootstrap-managed-removed"; then
   echo "Removed managed Secret was not garbage-collected by the second apply" >&2
   exit 1
 fi
-expected_inventory="- Secret/flux-system/bootstrap-managed"
+expected_inventory="$(printf '%s\n' '- ConfigMap/flux-system/runtime-info' '- Secret/flux-system/bootstrap-managed')"
 if [ "$(inventory_entries flux-operator-bootstrap)" != "${expected_inventory}" ]; then
   echo "Managed secret inventory was not updated after removing a Secret from desired state" >&2
   echo "Expected: ${expected_inventory}" >&2
@@ -436,8 +458,8 @@ if [ "$(prerequisite_configmap_value)" != "drifted" ]; then
 fi
 
 section "Secret Rotation"
-note "Rotating managed secret value"
-render_root_module "${success_tf_dir}" "flux-operator-bootstrap" "" "rotated" "" 3
+note "Rotating managed secret value (same revision, only content changes)"
+render_root_module "${success_tf_dir}" "flux-operator-bootstrap" "" "rotated" "" 2
 terraform -chdir="${success_tf_dir}" apply -no-color -auto-approve
 if [ "$(secret_value bootstrap-managed)" != "rotated" ]; then
   echo "Managed Secret was not updated after rotation" >&2
@@ -445,6 +467,16 @@ if [ "$(secret_value bootstrap-managed)" != "rotated" ]; then
 fi
 note "Verifying rotated secret material did not land in Terraform state"
 assert_no_secret_material_in_state "${success_tf_dir}"
+
+section "Revision Bump"
+note "Bumping revision without changing content to verify forced re-run"
+render_root_module "${success_tf_dir}" "flux-operator-bootstrap" "" "rotated" "" 3
+terraform -chdir="${success_tf_dir}" apply -no-color -auto-approve
+assert_flux_runtime_ready
+if [ "$(secret_value bootstrap-managed)" != "rotated" ]; then
+  echo "Managed Secret value changed unexpectedly after revision-only bump" >&2
+  exit 1
+fi
 
 section "Destroy Behavior"
 note "Verifying Flux resources exist before destroy"

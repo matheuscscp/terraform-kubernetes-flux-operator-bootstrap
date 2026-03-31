@@ -9,6 +9,8 @@ gitopsResources:
 
 managedResources:
   hasSecrets: false
+  secretsHash: ""
+  runtimeInfo: {}
 
 timeout: "5m"
 

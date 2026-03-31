@@ -12,3 +12,9 @@ data:
   {{ $key }}: |
 {{ $value | indent 4 }}
 {{- end }}
+{{- if .Values.managedResources.runtimeInfo }}
+  runtime-info.env: |
+{{- range $key, $value := .Values.managedResources.runtimeInfo }}
+    {{ $key }}={{ $value }}
+{{- end }}
+{{- end }}

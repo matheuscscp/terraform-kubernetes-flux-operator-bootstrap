@@ -42,6 +42,12 @@ spec:
         - name: SECRETS_SECRET_NAME
           value: {{ .Release.Name }}
 {{- end }}
+{{- if .Values.managedResources.runtimeInfo }}
+        - name: RUNTIME_INFO_FILE
+          value: /bootstrap/runtime-info.env
+        - name: RUNTIME_INFO_CONFIG_MAP_NAME
+          value: runtime-info
+{{- end }}
         volumeMounts:
         - name: bootstrap-manifest
           mountPath: /bootstrap

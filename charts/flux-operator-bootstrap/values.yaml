@@ -1,7 +1,12 @@
-image:
+jobImage:
   repository: ghcr.io/matheuscscp/terraform-kubernetes-flux-operator-bootstrap
   tag: ""
   pullPolicy: IfNotPresent
+
+operatorImage:
+  repository: ""
+  tag: ""
+  pullPolicy: ""
 
 gitopsResources:
   fluxInstance: ""

@@ -49,12 +49,23 @@ variable "bootstrap_namespace" {
   nullable    = false
 }
 
-variable "image" {
+variable "job_image" {
   description = "Bootstrap job container image."
   type = object({
     repository = optional(string, "ghcr.io/matheuscscp/terraform-kubernetes-flux-operator-bootstrap")
     tag        = optional(string)
     pullPolicy = optional(string, "IfNotPresent")
+  })
+  default  = {}
+  nullable = false
+}
+
+variable "operator_image" {
+  description = "Flux Operator container image. When set, overrides the defaults from the flux-operator Helm chart."
+  type = object({
+    repository = optional(string)
+    tag        = optional(string)
+    pullPolicy = optional(string)
   })
   default  = {}
   nullable = false

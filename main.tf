@@ -50,9 +50,14 @@ resource "helm_release" "this" {
   max_history      = 5
 
   values = [yamlencode({
-    image = merge(var.image, {
-      tag = coalesce(var.image.tag, local.module_version)
+    jobImage = merge(var.job_image, {
+      tag = coalesce(var.job_image.tag, local.module_version)
     })
+    operatorImage = {
+      repository = var.operator_image.repository != null ? var.operator_image.repository : ""
+      tag        = var.operator_image.tag != null ? var.operator_image.tag : ""
+      pullPolicy = var.operator_image.pullPolicy != null ? var.operator_image.pullPolicy : ""
+    }
     gitopsResources = {
       fluxInstance  = local.flux_instance_yaml
       prerequisites = local.prerequisite_files

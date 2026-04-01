@@ -296,7 +296,7 @@ module "bootstrap" {
   bootstrap_namespace = "${bootstrap_namespace}"
   revision            = ${revision}
 
-  image = {
+  job_image = {
     tag = "${image_tag}"
   }
 

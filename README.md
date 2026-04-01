@@ -200,10 +200,14 @@ gitops_resources = {
     - `.labels` (`Default: {}`): labels to set on the ConfigMap
     - `.annotations` (`Default: {}`): annotations to set on the ConfigMap
 - `bootstrap_namespace` (`Default: "flux-operator-bootstrap"`): namespace for the bootstrap transport resources
-- `image` (`Default: {}`): bootstrap job container image
+- `job_image` (`Default: {}`): bootstrap job container image
   - `.repository` (`Default: "ghcr.io/matheuscscp/terraform-kubernetes-flux-operator-bootstrap"`): image repository; override for mirrored or air-gapped environments
   - `.tag` (`Default: module version`): image tag; defaults to the module version
   - `.pullPolicy` (`Default: "IfNotPresent"`): image pull policy
+- `operator_image` (`Default: {}`): Flux Operator container image; when set, overrides the defaults from the flux-operator Helm chart
+  - `.repository` (`Optional`): image repository
+  - `.tag` (`Optional`): image tag
+  - `.pullPolicy` (`Optional`): image pull policy
 - `timeout` (`Default: "5m"`): timeout for `FluxInstance` readiness waiting and the bootstrap job
 
 **Note**: Secrets are not stored in the Terraform state. Managed resources

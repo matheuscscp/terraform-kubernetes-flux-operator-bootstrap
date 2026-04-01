@@ -15,6 +15,9 @@ runtime_info_labels_file="${RUNTIME_INFO_LABELS_FILE:-}"
 runtime_info_annotations_file="${RUNTIME_INFO_ANNOTATIONS_FILE:-}"
 runtime_info_config_map_name="${RUNTIME_INFO_CONFIG_MAP_NAME:-flux-runtime-info}"
 inventory_config_map_name="inventory"
+operator_image_repository="${OPERATOR_IMAGE_REPOSITORY:-}"
+operator_image_tag="${OPERATOR_IMAGE_TAG:-}"
+operator_image_pull_policy="${OPERATOR_IMAGE_PULL_POLICY:-}"
 debug_fault_injection_message="${DEBUG_FAULT_INJECTION_MESSAGE:-}"
 debug_flux_operator_image_tag="${DEBUG_FLUX_OPERATOR_IMAGE_TAG:-}"
 field_manager="flux-operator-bootstrap"
@@ -561,6 +564,15 @@ helm_release_status() {
 install_flux_operator() {
   set_args=""
   install_timeout="${timeout}"
+  if [ -n "${operator_image_repository}" ]; then
+    set_args="${set_args} --set image.repository=${operator_image_repository}"
+  fi
+  if [ -n "${operator_image_tag}" ]; then
+    set_args="${set_args} --set image.tag=${operator_image_tag}"
+  fi
+  if [ -n "${operator_image_pull_policy}" ]; then
+    set_args="${set_args} --set image.imagePullPolicy=${operator_image_pull_policy}"
+  fi
   if [ -n "${debug_flux_operator_image_tag}" ]; then
     set_args="--set image.tag=${debug_flux_operator_image_tag} --set replicas=2"
     install_timeout="15s"

@@ -1,3 +1,5 @@
+Moved to: https://github.com/controlplaneio-fluxcd/terraform-kubernetes-flux-operator-bootstrap
+
 # terraform-kubernetes-flux-operator-bootstrap
 
 Terraform module that bootstraps Flux Operator in a Kubernetes cluster using a

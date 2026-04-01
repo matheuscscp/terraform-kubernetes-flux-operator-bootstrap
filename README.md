@@ -88,7 +88,7 @@ provider "kubernetes" {
 
 module "flux_operator_bootstrap" {
   source  = "matheuscscp/flux-operator-bootstrap/kubernetes"
-  version = "0.0.19"
+  version = "0.0.20"
 
   revision = var.bootstrap_revision
 
@@ -157,7 +157,7 @@ provider "helm" {
 module "flux_operator_bootstrap" {
   depends_on = [module.eks]
   source     = "matheuscscp/flux-operator-bootstrap/kubernetes"
-  version    = "0.0.18"
+  version    = "0.0.20"
   revision   = 1
   # ...
 }

@@ -93,7 +93,7 @@ provider "kubernetes" {
 
 module "flux_operator_bootstrap" {
   source  = "matheuscscp/flux-operator-bootstrap/kubernetes"
-  version = "0.0.18"
+  version = "0.0.19"
 
   revision = var.bootstrap_revision
 

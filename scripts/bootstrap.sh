@@ -11,7 +11,9 @@ cluster_role_binding_name="${CLUSTER_ROLE_BINDING_NAME:?CLUSTER_ROLE_BINDING_NAM
 config_map_name="${CONFIG_MAP_NAME:?CONFIG_MAP_NAME is required}"
 secrets_secret_name="${SECRETS_SECRET_NAME:-}"
 runtime_info_file="${RUNTIME_INFO_FILE:-}"
-runtime_info_config_map_name="${RUNTIME_INFO_CONFIG_MAP_NAME:-runtime-info}"
+runtime_info_labels_file="${RUNTIME_INFO_LABELS_FILE:-}"
+runtime_info_annotations_file="${RUNTIME_INFO_ANNOTATIONS_FILE:-}"
+runtime_info_config_map_name="${RUNTIME_INFO_CONFIG_MAP_NAME:-flux-runtime-info}"
 inventory_config_map_name="inventory"
 debug_fault_injection_message="${DEBUG_FAULT_INJECTION_MESSAGE:-}"
 debug_flux_operator_image_tag="${DEBUG_FLUX_OPERATOR_IMAGE_TAG:-}"
@@ -452,10 +454,36 @@ reconcile_managed_resources() {
   # Runtime info ConfigMap
   if [ -n "${runtime_info_file}" ] && [ -f "${runtime_info_file}" ]; then
     runtime_info_manifest="${scratch_dir}/runtime-info-configmap.yaml"
-    kubectl create configmap "${runtime_info_config_map_name}" \
-      -n "${namespace}" \
-      --from-env-file="${runtime_info_file}" \
-      --dry-run=client -o yaml > "${runtime_info_manifest}"
+
+    # Build the ConfigMap YAML with data, labels, and annotations.
+    printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: %s\n  namespace: %s\n' \
+      "${runtime_info_config_map_name}" "${namespace}" > "${runtime_info_manifest}"
+
+    # Append labels if any.
+    if [ -n "${runtime_info_labels_file}" ] && [ -f "${runtime_info_labels_file}" ] && [ -s "${runtime_info_labels_file}" ]; then
+      printf '  labels:\n' >> "${runtime_info_manifest}"
+      while IFS="=" read -r key value; do
+        [ -z "${key}" ] && continue
+        printf '    %s: "%s"\n' "${key}" "${value}" >> "${runtime_info_manifest}"
+      done < "${runtime_info_labels_file}"
+    fi
+
+    # Append annotations if any.
+    if [ -n "${runtime_info_annotations_file}" ] && [ -f "${runtime_info_annotations_file}" ] && [ -s "${runtime_info_annotations_file}" ]; then
+      printf '  annotations:\n' >> "${runtime_info_manifest}"
+      while IFS="=" read -r key value; do
+        [ -z "${key}" ] && continue
+        printf '    %s: "%s"\n' "${key}" "${value}" >> "${runtime_info_manifest}"
+      done < "${runtime_info_annotations_file}"
+    fi
+
+    # Append data.
+    printf 'data:\n' >> "${runtime_info_manifest}"
+    while IFS="=" read -r key value; do
+      [ -z "${key}" ] && continue
+      printf '  %s: "%s"\n' "${key}" "${value}" >> "${runtime_info_manifest}"
+    done < "${runtime_info_file}"
+
     reconcile_managed_resource "${runtime_info_manifest}" "ConfigMap"
     printf 'ConfigMap/%s/%s\n' "${namespace}" "${runtime_info_config_map_name}" >> "${current_entries_file}"
   else

@@ -48,7 +48,7 @@ can take ownership for steady-state reconciliation.
 are reconciled on every bootstrap run. `managed_resources.secrets_yaml` is
 reconciled into the target namespace with server-side apply.
 `managed_resources.runtime_info` is applied as a `ConfigMap` named
-`runtime-info` in the target namespace and its key-value pairs are substituted
+`flux-runtime-info` in the target namespace and its data values are substituted
 into the `FluxInstance` manifest before the initial apply. This enables
 Flux's `Kustomization.spec.postBuild` variable substitution for the
 `FluxInstance` itself by referencing the same `ConfigMap` via
@@ -93,7 +93,7 @@ module "flux_operator_bootstrap" {
   revision = var.bootstrap_revision
 
   gitops_resources = {
-    flux_instance_path = "${path.root}/clusters/staging/flux-system/flux-instance.yaml"
+    flux_instance_path  = "${path.root}/clusters/staging/flux-system/flux-instance.yaml"
     prerequisites_paths = [
       "${path.root}/clusters/staging/flux-system/eks-nodepools.yaml",
     ]
@@ -110,8 +110,16 @@ module "flux_operator_bootstrap" {
         .dockerconfigjson: '${replace(local.ghcr_auth_dockerconfigjson, "'", "''")}'
     YAML
     runtime_info = {
-      cluster_name = "staging"
-      cluster_region = "eu-west-2"
+      data = {
+        cluster_name   = "staging"
+        cluster_region = "eu-west-2"
+      }
+      labels = {
+        "toolkit.fluxcd.io/runtime" = "true"
+      }
+      annotations = {
+        "kustomize.toolkit.fluxcd.io/ssa" = "Merge"
+      }
     }
   }
 }
@@ -121,8 +129,8 @@ module "flux_operator_bootstrap" {
 
 When `managed_resources.runtime_info` is set, the bootstrap job:
 
-1. Creates a `ConfigMap` named `runtime-info` in the `FluxInstance` target
-   namespace with the provided key-value pairs
+1. Creates a `ConfigMap` named `flux-runtime-info` in the `FluxInstance` target
+   namespace with the provided data, labels, and annotations
 2. Substitutes `${variable}` references in the `FluxInstance` manifest using
    `flux envsubst --strict` before the initial apply
 
@@ -187,7 +195,10 @@ gitops_resources = {
   - `.prerequisites_paths` (`Default: []`): ordered list of paths to prerequisite manifest files
 - `managed_resources` (`Default: {}`): resources reconciled by the bootstrap job on every run
   - `.secrets_yaml` (`Default: ""`): multi-document Secret manifest YAML reconciled into the target namespace with server-side apply; all documents must be `Secret` objects and their namespace must be omitted or equal the `FluxInstance` namespace
-  - `.runtime_info` (`Default: {}`): key-value pairs applied as a `ConfigMap` named `runtime-info` in the target namespace and substituted into the `FluxInstance` manifest via `flux envsubst`; tracked in inventory and garbage-collected when removed
+  - `.runtime_info` (`Optional`): when set, creates a `ConfigMap` named `flux-runtime-info` in the target namespace; its `.data` values are substituted into the `FluxInstance` manifest via `flux envsubst`; tracked in inventory and garbage-collected when removed
+    - `.data` (`Required`): key-value pairs for the ConfigMap data
+    - `.labels` (`Default: {}`): labels to set on the ConfigMap
+    - `.annotations` (`Default: {}`): annotations to set on the ConfigMap
 - `bootstrap_namespace` (`Default: "flux-operator-bootstrap"`): namespace for the bootstrap transport resources
 - `image` (`Default: {}`): bootstrap job container image
   - `.repository` (`Default: "ghcr.io/matheuscscp/terraform-kubernetes-flux-operator-bootstrap"`): image repository; override for mirrored or air-gapped environments

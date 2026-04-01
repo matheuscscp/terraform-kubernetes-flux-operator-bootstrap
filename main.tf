@@ -60,7 +60,7 @@ resource "helm_release" "this" {
     managedResources = {
       hasSecrets  = local.has_secrets_yaml
       secretsHash = local.has_secrets_yaml ? sha256(var.managed_resources.secrets_yaml) : ""
-      runtimeInfo = var.managed_resources.runtime_info
+      runtimeInfo = var.managed_resources.runtime_info != null ? var.managed_resources.runtime_info : { data = {}, labels = {}, annotations = {} }
     }
     timeout                    = var.timeout
     debugFaultInjectionMessage = var.debug_fault_injection_message

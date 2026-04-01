@@ -10,7 +10,10 @@ gitopsResources:
 managedResources:
   hasSecrets: false
   secretsHash: ""
-  runtimeInfo: {}
+  runtimeInfo:
+    data: {}
+    labels: {}
+    annotations: {}
 
 timeout: "5m"
 

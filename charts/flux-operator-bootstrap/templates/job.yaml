@@ -42,11 +42,15 @@ spec:
         - name: SECRETS_SECRET_NAME
           value: {{ .Release.Name }}
 {{- end }}
-{{- if .Values.managedResources.runtimeInfo }}
+{{- if .Values.managedResources.runtimeInfo.data }}
         - name: RUNTIME_INFO_FILE
           value: /bootstrap/runtime-info.env
+        - name: RUNTIME_INFO_LABELS_FILE
+          value: /bootstrap/runtime-info-labels.env
+        - name: RUNTIME_INFO_ANNOTATIONS_FILE
+          value: /bootstrap/runtime-info-annotations.env
         - name: RUNTIME_INFO_CONFIG_MAP_NAME
-          value: runtime-info
+          value: flux-runtime-info
 {{- end }}
         volumeMounts:
         - name: bootstrap-manifest

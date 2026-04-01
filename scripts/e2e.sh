@@ -316,7 +316,15 @@ module "bootstrap" {
 ${managed_secrets_yaml}
 YAML
     runtime_info = {
-      cluster_name = "${cluster_name}"
+      data = {
+        cluster_name = "${cluster_name}"
+      }
+      labels = {
+        "toolkit.fluxcd.io/runtime" = "true"
+      }
+      annotations = {
+        "kustomize.toolkit.fluxcd.io/ssa" = "Merge"
+      }
     }
   }
 }
@@ -341,12 +349,26 @@ note "Verifying FluxInstance and Flux workloads are ready"
 assert_flux_runtime_ready
 note "Verifying ordered prerequisites and managed secrets were applied"
 assert_bootstrap_inputs_applied
-note "Verifying runtime-info ConfigMap was created in target namespace"
-ri_value="$(kubectl --context "kind-${cluster_name}" -n flux-system get configmap/runtime-info \
+note "Verifying runtime-info ConfigMap was created in target namespace with data, labels, and annotations"
+ri_value="$(kubectl --context "kind-${cluster_name}" -n flux-system get configmap/flux-runtime-info \
   -o jsonpath='{.data.cluster_name}')"
 if [ "${ri_value}" != "${cluster_name}" ]; then
   echo "runtime-info ConfigMap did not contain expected cluster_name value" >&2
   echo "Expected: ${cluster_name}, Got: ${ri_value}" >&2
+  exit 1
+fi
+ri_label="$(kubectl --context "kind-${cluster_name}" -n flux-system get configmap/flux-runtime-info \
+  -o jsonpath='{.metadata.labels.toolkit\.fluxcd\.io/runtime}')"
+if [ "${ri_label}" != "true" ]; then
+  echo "runtime-info ConfigMap did not contain expected label" >&2
+  echo "Expected: true, Got: ${ri_label}" >&2
+  exit 1
+fi
+ri_annotation="$(kubectl --context "kind-${cluster_name}" -n flux-system get configmap/flux-runtime-info \
+  -o jsonpath='{.metadata.annotations.kustomize\.toolkit\.fluxcd\.io/ssa}')"
+if [ "${ri_annotation}" != "Merge" ]; then
+  echo "runtime-info ConfigMap did not contain expected annotation" >&2
+  echo "Expected: Merge, Got: ${ri_annotation}" >&2
   exit 1
 fi
 note "Verifying FluxInstance annotation was substituted with runtime info"
@@ -359,7 +381,7 @@ if [ "${fi_annotation}" != "${cluster_name}" ]; then
   exit 1
 fi
 initial_managed_secret_uid="$(secret_uid bootstrap-managed)"
-expected_inventory="$(printf '%s\n' '- ConfigMap/flux-system/runtime-info' '- Secret/flux-system/bootstrap-managed' '- Secret/flux-system/bootstrap-managed-removed')"
+expected_inventory="$(printf '%s\n' '- ConfigMap/flux-system/flux-runtime-info' '- Secret/flux-system/bootstrap-managed' '- Secret/flux-system/bootstrap-managed-removed')"
 if [ "$(inventory_entries flux-operator-bootstrap)" != "${expected_inventory}" ]; then
   echo "Managed secret inventory was not created with the expected entries" >&2
   echo "Expected: ${expected_inventory}" >&2
@@ -445,7 +467,7 @@ if target_secret_exists "bootstrap-managed-removed"; then
   echo "Removed managed Secret was not garbage-collected by the second apply" >&2
   exit 1
 fi
-expected_inventory="$(printf '%s\n' '- ConfigMap/flux-system/runtime-info' '- Secret/flux-system/bootstrap-managed')"
+expected_inventory="$(printf '%s\n' '- ConfigMap/flux-system/flux-runtime-info' '- Secret/flux-system/bootstrap-managed')"
 if [ "$(inventory_entries flux-operator-bootstrap)" != "${expected_inventory}" ]; then
   echo "Managed secret inventory was not updated after removing a Secret from desired state" >&2
   echo "Expected: ${expected_inventory}" >&2
